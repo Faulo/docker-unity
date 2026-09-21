@@ -35,13 +35,13 @@ jobs:
               with:
                   dotnet-version: 9.0.x
             - name: Run unit tests
-              run: dotnet test common/ComposeUnity.Tests/ComposeUnity.Tests.csproj --nologo --configuration Release --blame-hang-timeout 2m
+              run: dotnet test common/Unity.Tests/Unity.Tests.csproj --nologo --configuration Release --blame-hang-timeout 2m
             - name: Register Linux Docker context
               run: docker context create linux --docker host=unix:///var/run/docker.sock
             - name: Run real-daemon tests
-              run: dotnet test common/ComposeUnity.DaemonTests/ComposeUnity.DaemonTests.csproj --nologo --configuration Release
+              run: dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --nologo --configuration Release
               env:
-                  COMPOSE_UNITY_DAEMON_TEST_REQUIRED_OS: linux
+                  UNITY_DAEMON_TEST_REQUIRED_OS: linux
 
     test-windows:
         runs-on: windows-2022
@@ -87,9 +87,9 @@ jobs:
                       throw "The Windows Docker context is not connected to a Windows daemon: $daemonOs"
                   }
             - name: Run Windows real-daemon tests
-              run: dotnet test common/ComposeUnity.DaemonTests/ComposeUnity.DaemonTests.csproj --nologo --configuration Release
+              run: dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --nologo --configuration Release
               env:
-                  COMPOSE_UNITY_DAEMON_TEST_REQUIRED_OS: windows
+                  UNITY_DAEMON_TEST_REQUIRED_OS: windows
 
     configuration:
         needs:

@@ -79,7 +79,7 @@ function New-ExportResponse {
         } elseif ($name) {
             $lines.Add("/EXPORT:$name=shell32real.$name,@$ordinal")
         } else {
-            $lines.Add("/EXPORT:ComposeUnityOrdinal$ordinal=shell32real.#$ordinal,@$ordinal,NONAME")
+            $lines.Add("/EXPORT:UnityOrdinal$ordinal=shell32real.#$ordinal,@$ordinal,NONAME")
         }
     }
 

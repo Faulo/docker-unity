@@ -1,0 +1,10 @@
+FROM mcr.microsoft.com/dotnet/runtime:9.0-nanoserver-1809
+COPY controller/unity.exe C:/Windows/unity.exe
+COPY controller/unity.exe C:/Windows/unity-sidecar.exe
+COPY backend/unity.exe C:/Windows/php.exe
+USER ContainerAdministrator
+ENV UNITY_CALL_TIMEOUT=30
+EXPOSE 8080
+HEALTHCHECK --interval=1s --timeout=5s --start-period=1s --retries=30 \
+    CMD ["unity-sidecar.exe", "health"]
+CMD ["unity-sidecar.exe"]

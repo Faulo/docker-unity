@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <UnityTargetFramework Condition="'$(UnityTargetFramework)' == ''">net9.0</UnityTargetFramework>
+        <TargetFramework>$(UnityTargetFramework)</TargetFramework>
+        <PublishSingleFile>true</PublishSingleFile>
+        <PublishSelfContained>true</PublishSelfContained>
+        <DebugType>none</DebugType>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+        <AssemblyName>unity</AssemblyName>
+        <RootNamespace>Unity</RootNamespace>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Include="*.cs" />
+        <FrameworkReference Include="Microsoft.AspNetCore.App" />
+        <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.0.0" />
+    </ItemGroup>
+    <ItemGroup>
+        <InternalsVisibleTo Include="Unity.Tests" />
+    </ItemGroup>
+</Project>

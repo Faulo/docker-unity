@@ -7,13 +7,7 @@ ENV NUGET_PACKAGES=C:/nuget/packages
 
 COPY . .
 
-RUN dotnet publish \
-        --configuration Release \
-        --runtime win-x64 \
-        --self-contained true \
-        --property:PublishSingleFile=true \
-        --property:UseAppHost=true \
-        --property:DebugType=None
+RUN dotnet publish --runtime win-x64
 
 FROM mcr.microsoft.com/windows:${OS_BASE}
 
@@ -21,7 +15,7 @@ ARG OS_BASE
 
 SHELL ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell", "-ExecutionPolicy", "Bypass", "-NonInteractive", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
 
-WORKDIR C:/compose-unity
+WORKDIR C:/unity
 
 # The selectable full Windows base supplies the desktop WinRT classes required
 # by Unity. Shell compatibility artifacts below are validated per OS family.
@@ -31,24 +25,11 @@ RUN $policyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Syste
     Set-ItemProperty -LiteralPath $policyKey -Name ConsentPromptBehaviorAdmin -Value 0; \
     Set-ItemProperty -LiteralPath $policyKey -Name PromptOnSecureDesktop -Value 0
 
-# Chocolatey
-# Install a pinned Chocolatey package directly so its bootstrap remains
-# reproducible and does not depend on the current remote installation script.
-RUN $archive = 'C:\chocolatey.1.4.0.zip'; \
-    $extractRoot = 'C:\chocolatey.1.4.0'; \
-    Invoke-WebRequest -Uri 'https://community.chocolatey.org/api/v2/package/chocolatey/1.4.0' -OutFile $archive; \
-    $actualHash = (Get-FileHash -Algorithm SHA256 $archive).Hash; \
-    if ($actualHash -ne '1660261EDD358FF5EA84A503CA3F01A24DDB0E281002BD4237B1071289161A26') { \
-        throw ('Chocolatey package checksum mismatch: ' + $actualHash) \
-    }; \
-    Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot; \
-    $env:ChocolateyInstall = 'C:\ProgramData\chocolatey'; \
-    $env:ChocolateyPackageVersion = '1.4.0'; \
-    [Environment]::SetEnvironmentVariable('ChocolateyInstall', $env:ChocolateyInstall, 'Machine'); \
-    & (Join-Path $extractRoot 'tools\chocolateyInstall.ps1'); \
-    Remove-Item -LiteralPath $archive, $extractRoot -Recurse -Force; \
-    choco --version; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to install Chocolatey' }
+# Chocolatey 1.4 supports the .NET Framework available in LTSC 2019.
+ARG CHOCOLATEY_VERSION=1.4.0
+RUN $env:chocolateyVersion = $env:CHOCOLATEY_VERSION; \
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1')); \
+    if (-not (Get-Command choco -ErrorAction SilentlyContinue)) { throw 'Chocolatey installation failed' }
 
 # Keep the full desktop API surface visible as an explicit image invariant.
 RUN foreach ($dll in 'ddraw.dll', 'dsound.dll', 'glu32.dll', 'opengl32.dll', 'avicap32.dll', 'msvfw32.dll') { \
@@ -66,31 +47,25 @@ ARG DOTNET_VERSION=9.0
 ENV DOTNET_VERSION="${DOTNET_VERSION}"
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
 ENV DOTNET_CLI_UI_LANGUAGE=en
-ARG NODE_VERSION=24
-ENV NODE_VERSION="${NODE_VERSION}"
 ARG BLENDER_SERIES=4.5
-COPY windows/compose-unity.nuspec compose-unity.nuspec
+COPY windows/unity.nuspec unity.nuspec
 RUN if ($env:DOTNET_VERSION -notmatch '^\d+\.\d+$') { throw "Invalid .NET SDK feature version: $env:DOTNET_VERSION" }; \
-    if ($env:NODE_VERSION -notmatch '^\d+$') { throw "Invalid Node.js major version: $env:NODE_VERSION" }; \
     $seriesMatch = [regex]::Match($env:BLENDER_SERIES, '^(?<major>\d+)\.(?<minor>\d+)$'); \
     if (-not $seriesMatch.Success) { throw "Invalid Blender series: $env:BLENDER_SERIES" }; \
     $nextSeries = '{0}.{1}' -f $seriesMatch.Groups['major'].Value, ([int]$seriesMatch.Groups['minor'].Value + 1); \
-    [xml]$packageSpec = Get-Content -LiteralPath compose-unity.nuspec; \
+    [xml]$packageSpec = Get-Content -LiteralPath unity.nuspec; \
     $dotnetDependencies = @($packageSpec.package.metadata.dependencies.dependency | Where-Object id -like 'dotnet-*-sdk'); \
     if ($dotnetDependencies.Count -ne 1) { throw "Expected one .NET SDK dependency, found $($dotnetDependencies.Count)" }; \
     $dotnetDependencies[0].SetAttribute('id', 'dotnet-' + $env:DOTNET_VERSION + '-sdk'); \
-    $nodeDependencies = @($packageSpec.package.metadata.dependencies.dependency | Where-Object id -eq 'nodejs'); \
-    if ($nodeDependencies.Count -ne 1) { throw "Expected one Node.js dependency, found $($nodeDependencies.Count)" }; \
-    $nodeDependencies[0].SetAttribute('version', '[' + $env:NODE_VERSION + ',' + ([int]$env:NODE_VERSION + 1) + ')'); \
     $blenderDependencies = @($packageSpec.package.metadata.dependencies.dependency | Where-Object id -eq 'blender'); \
     if ($blenderDependencies.Count -ne 1) { throw "Expected one Blender dependency, found $($blenderDependencies.Count)" }; \
     $blenderDependencies[0].SetAttribute('version', '[' + $env:BLENDER_SERIES + ',' + $nextSeries + ')'); \
-    $packageSpec.Save((Resolve-Path -LiteralPath compose-unity.nuspec)); \
-    choco pack compose-unity.nuspec; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to pack compose-unity' }; \
+    $packageSpec.Save((Resolve-Path -LiteralPath unity.nuspec)); \
+    choco pack unity.nuspec; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to pack unity' }; \
     $dependencyInstallSucceeded = $false; \
     for ($attempt = 1; $attempt -le 5; $attempt++) { \
-        choco install compose-unity --no-progress --yes --ignore-checksums --execution-timeout=7200 --source '.;https://community.chocolatey.org/api/v2/'; \
+        choco install faulo-unity --no-progress --yes --ignore-checksums --execution-timeout=7200 --source 'C:\unity;https://community.chocolatey.org/api/v2/'; \
         if ($LASTEXITCODE -eq 0) { \
             $dependencyInstallSucceeded = $true; \
             break \
@@ -98,7 +73,7 @@ RUN if ($env:DOTNET_VERSION -notmatch '^\d+\.\d+$') { throw "Invalid .NET SDK fe
         Write-Warning ('Chocolatey dependency installation attempt ' + $attempt + ' failed'); \
         if ($attempt -lt 5) { Start-Sleep -Seconds (30 * $attempt) } \
     }; \
-    if (-not $dependencyInstallSucceeded) { throw 'Failed to install compose-unity dependencies after 5 attempts' }; \
+    if (-not $dependencyInstallSucceeded) { throw 'Failed to install unity dependencies after 5 attempts' }; \
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); \
     $env:PATH = $machinePath; \
     $installedSdkVersion = dotnet --version; \
@@ -107,7 +82,9 @@ RUN if ($env:DOTNET_VERSION -notmatch '^\d+\.\d+$') { throw "Invalid .NET SDK fe
     $dotnetToolsDirectory = Join-Path $env:USERPROFILE '.dotnet\tools'; \
     [Environment]::SetEnvironmentVariable('Path', $dotnetToolsDirectory + ';' + $machinePath, 'Machine'); \
     Remove-Item -Force *.nuspec; \
-    Remove-Item -Force *.nupkg
+    Remove-Item -Force *.nupkg; \
+    choco install 7zip.portable --no-progress --yes --execution-timeout=7200; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to install the temporary archive tool' }
 
 # DocFX
 RUN dotnet tool update --global docfx; \
@@ -142,9 +119,9 @@ RUN $package = 'C:\net471-reference-assemblies.nupkg'; \
 
 # Use the supported Visual Studio 2019 servicing baseline because Visual Studio
 # 2022 MSBuild is incompatible with the .NET Framework build host used here.
-COPY windows/WindowsBase C:/compose-unity/WindowsBase
-RUN & 'C:\compose-unity\WindowsBase\install.ps1'; \
-    Remove-Item -LiteralPath C:\compose-unity\WindowsBase -Recurse -Force
+COPY windows/WindowsBase C:/unity/WindowsBase
+RUN & 'C:\unity\WindowsBase\install.ps1'; \
+    Remove-Item -LiteralPath C:\unity\WindowsBase -Recurse -Force
 
 # Unity publishes the 3.12.1 installer under its 3.12.0 archive path. Its NSIS
 # process can hang in a container, so fall back to its verified app archive.
@@ -194,13 +171,25 @@ RUN $installer = 'C:\UnityHubSetup.exe'; \
 
 # Resume large Editor downloads after temporary CDN stalls and launch the
 # installer helper directly because Windows containers cannot display UAC.
-COPY windows/patch-unity-hub.js C:/compose-unity/patch-unity-hub.js
-RUN node C:\compose-unity\patch-unity-hub.js; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to patch Unity Hub for Windows containers' }; \
-    Remove-Item -Force C:\compose-unity\patch-unity-hub.js
+COPY windows/patch-unity-hub.ps1 C:/unity/patch-unity-hub.ps1
+RUN & C:\unity\patch-unity-hub.ps1; \
+    Remove-Item -Force C:\unity\patch-unity-hub.ps1; \
+    choco uninstall 7zip.portable --no-progress --yes; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to remove the temporary archive tool' }
 
-COPY windows/php-extensions.ini C:/tools/php82/compose-unity-extensions.ini
-RUN Get-Content C:/tools/php82/compose-unity-extensions.ini | Add-Content -Path C:/tools/php82/php.ini
+COPY windows/php-extensions.ini C:/tools/php84/unity-extensions.ini
+RUN $imapVersion = (Invoke-WebRequest -UseBasicParsing 'https://pecl.php.net/rest/r/imap/latest.txt').Content.Trim(); \
+    $imapArchive = 'C:\php-imap.zip'; \
+    $imapRoot = 'C:\php-imap'; \
+    $imapUri = 'https://windows.php.net/downloads/pecl/releases/imap/' + $imapVersion + '/php_imap-' + $imapVersion + '-8.4-nts-vs17-x64.zip'; \
+    Invoke-WebRequest -Uri $imapUri -OutFile $imapArchive; \
+    Expand-Archive -LiteralPath $imapArchive -DestinationPath $imapRoot; \
+    Move-Item -LiteralPath (Join-Path $imapRoot 'php_imap.dll') -Destination C:\tools\php84\ext\php_imap.dll; \
+    Remove-Item -LiteralPath $imapArchive, $imapRoot -Recurse -Force; \
+    Get-Content C:/tools/php84/unity-extensions.ini | Add-Content -Path C:/tools/php84/php.ini; \
+    $modules = @(php -m); \
+    if ($modules -notcontains 'imap') { throw 'PHP IMAP extension is unavailable' }; \
+    if ($modules -notcontains 'xsl') { throw 'PHP XSL extension is unavailable' }
 
 RUN $blenderDirectory = 'C:\Program Files\Blender Foundation\Blender ' + $env:BLENDER_SERIES; \
     $blenderExecutable = Join-Path $blenderDirectory 'blender.exe'; \
@@ -230,16 +219,16 @@ RUN $blenderDirectory = 'C:\Program Files\Blender Foundation\Blender ' + $env:BL
 # reliably resolve associations on mounted paths or launch executables without
 # Explorer. Preserve every original export through a proxy and replace only
 # FindExecutableW and ShellExecuteExW with container-safe implementations.
-COPY windows/Shell32Proxy C:/compose-unity/Shell32Proxy
-RUN & 'C:\compose-unity\Shell32Proxy\install.ps1'
+COPY windows/Shell32Proxy C:/unity/Shell32Proxy
+RUN & 'C:\unity\Shell32Proxy\install.ps1'
 
 # Run both architectures in a fresh layer so KnownDLL resolution loads the
 # proxies rather than the original DLLs mapped by the replacement layer.
-RUN & 'C:\compose-unity\Shell32Proxy\shell32-proxy-test-x64.exe'; \
+RUN & 'C:\unity\Shell32Proxy\shell32-proxy-test-x64.exe'; \
     if ($LASTEXITCODE -ne 0) { throw ('64-bit SHELL32 proxy test failed with exit code {0}' -f $LASTEXITCODE) }; \
-    & 'C:\compose-unity\Shell32Proxy\shell32-proxy-test-x86.exe'; \
+    & 'C:\unity\Shell32Proxy\shell32-proxy-test-x86.exe'; \
     if ($LASTEXITCODE -ne 0) { throw ('32-bit SHELL32 proxy test failed with exit code {0}' -f $LASTEXITCODE) }; \
-    Remove-Item -LiteralPath C:\compose-unity\Shell32Proxy -Recurse -Force
+    Remove-Item -LiteralPath C:\unity\Shell32Proxy -Recurse -Force
 
 # Test
 RUN git config --global --add safe.directory *; \
@@ -254,13 +243,6 @@ RUN git config --global --add safe.directory *; \
     if ($LASTEXITCODE -ne 0) { throw 'Composer smoke check failed' }; \
     blender --version; \
     if ($LASTEXITCODE -ne 0) { throw 'Blender smoke check failed' }; \
-    butler --version; \
-    if ($LASTEXITCODE -ne 0) { throw 'Butler smoke check failed' }; \
-    npm --version; \
-    if ($LASTEXITCODE -ne 0) { throw 'npm smoke check failed' }; \
-    $installedNodeVersion = node --version; \
-    if ($LASTEXITCODE -ne 0) { throw 'Node.js smoke check failed' }; \
-    if ($installedNodeVersion -notmatch ('^v' + [regex]::Escape($env:NODE_VERSION) + '\.')) { throw "Unexpected Node.js version: $installedNodeVersion" }; \
     git lfs version; \
     if ($LASTEXITCODE -ne 0) { throw 'Git LFS smoke check failed' }; \
     python --version; \
@@ -270,9 +252,10 @@ RUN git config --global --add safe.directory *; \
     dotnet --version; \
     if ($LASTEXITCODE -ne 0) { throw '.NET smoke check failed' }
 
-# Farah
-ENV COMPOSE_UNITY="compose-unity"
+ENV UNITY="unity"
 ENV COMPOSER_ALLOW_SUPERUSER="1"
+ENV COMPOSER="C:/unity/composer.json"
+ENV COMPOSER_VENDOR_DIR="C:/unity/vendor"
 
 ENV UNITY_LOGGING="stdin stdout stderr"
 ENV UNITY_ACCELERATOR_ENDPOINT=""
@@ -280,95 +263,40 @@ ENV UNITY_NO_GRAPHICS="1"
 
 # Windows containers cannot start Electron's sandboxed GPU process. Keep Unity's
 # documented CLI syntax externally and translate it before launching Hub.
-COPY --from=build C:/solution/windows/UnityHub/bin/Release/net9.0/win-x64/publish/unity-hub-launcher.exe C:/compose-unity/publish/unity-hub-launcher.exe
-COPY --from=build C:/solution/windows/SteamCmd/bin/Release/net9.0/win-x64/publish/steamcmd.exe C:/compose-unity/publish/steamcmd.exe
-COPY --from=build C:/solution/common/ComposeUnity/bin/Release/net9.0/win-x64/publish/compose-unity.exe C:/compose-unity/publish/compose-unity.exe
-RUN $hubArtifact = 'C:\compose-unity\publish\unity-hub-launcher.exe'; \
-    $steamCmdArtifact = 'C:\compose-unity\publish\steamcmd.exe'; \
-    $composeArtifact = 'C:\compose-unity\publish\compose-unity.exe'; \
+COPY --from=build C:/solution/windows/UnityHub/bin/Release/net9.0/win-x64/publish/unity-hub-launcher.exe C:/unity/publish/unity-hub-launcher.exe
+COPY --from=build C:/solution/common/Unity/bin/Release/net9.0/win-x64/publish/unity.exe C:/unity/publish/unity.exe
+RUN $hubArtifact = 'C:\unity\publish\unity-hub-launcher.exe'; \
+    $unityArtifact = 'C:\unity\publish\unity.exe'; \
     $hub = 'C:\Program Files\Unity Hub\Unity Hub.exe'; \
     Move-Item -LiteralPath $hub -Destination 'C:\Program Files\Unity Hub\Unity Hub.real.exe'; \
     Move-Item -LiteralPath $hubArtifact -Destination $hub; \
-    New-Item -ItemType Directory -Path C:\steamcmd | Out-Null; \
-    Move-Item -LiteralPath $steamCmdArtifact -Destination C:\steamcmd\steamcmd.exe; \
-    Copy-Item -LiteralPath $composeArtifact -Destination C:\Windows\compose-unity.exe; \
-    New-Item -ItemType HardLink -Path C:\Windows\compose-unity-sidecar.exe -Target C:\Windows\compose-unity.exe | Out-Null; \
-    Remove-Item -LiteralPath C:\compose-unity\publish -Recurse -Force
+    Copy-Item -LiteralPath $unityArtifact -Destination C:\Windows\unity.exe; \
+    New-Item -ItemType HardLink -Path C:\Windows\unity-sidecar.exe -Target C:\Windows\unity.exe | Out-Null; \
+    Remove-Item -LiteralPath C:\unity\publish -Recurse -Force
 
-RUN $archive = 'C:\steamcmd.zip'; \
-    Invoke-WebRequest -Uri 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip' -OutFile $archive; \
-    $extractRoot = 'C:\steamcmd-installer'; \
-    Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot; \
-    $installer = Join-Path $extractRoot 'steamcmd.exe'; \
-    $installerFiles = @(Get-ChildItem -LiteralPath $extractRoot -File -Recurse); \
-    if ($installerFiles.Count -ne 1 -or $installerFiles[0].FullName -ne $installer) { throw 'Unexpected SteamCMD archive contents' }; \
-    Move-Item -LiteralPath $installer -Destination C:\steamcmd\steamcmd-installer.exe; \
-    Remove-Item -LiteralPath $archive, $extractRoot -Recurse -Force; \
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); \
-    [Environment]::SetEnvironmentVariable('Path', 'C:\steamcmd;' + $machinePath, 'Machine'); \
-    if (Test-Path -LiteralPath C:\steam) { throw 'SteamCMD volume directory must not be populated in the image' }
-
-ENV COMPOSE_UNITY_CALL_TIMEOUT=86400
-ENV COMPOSE_UNITY_MCP=0
+ENV UNITY_CALL_TIMEOUT=86400
+ENV UNITY_MCP=0
 
 ARG UNITY_TIMEOUT="14400"
-ARG SLOTHSOFT_UNITY_VERSION=2.22
-RUN compose-unity require ('slothsoft/unity:^' + $env:SLOTHSOFT_UNITY_VERSION); \
+RUN composer require ('slothsoft/unity'); \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to require slothsoft/unity' }; \
-    compose-unity config process-timeout $env:UNITY_TIMEOUT; \
+    composer config process-timeout $env:UNITY_TIMEOUT; \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to configure the Composer process timeout' }; \
-    compose-unity update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to update compose-unity dependencies' }
+    composer update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to update Unity dependencies' }
 
 # Test
-RUN compose-unity exec unity-build; \
-    if ($LASTEXITCODE -ne 0) { throw 'compose-unity unity-build smoke check failed' }; \
-    compose-unity exec unity-help; \
-    if ($LASTEXITCODE -ne 0) { throw 'compose-unity unity-help smoke check failed' }; \
-    Remove-Item -LiteralPath C:\ProgramData\compose-unity -Recurse -Force
+RUN unity --help; \
+    if ($LASTEXITCODE -ne 0) { throw 'Unity command smoke check failed' }; \
+    pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion'; \
+    if ($LASTEXITCODE -ne 0) { throw 'PowerShell smoke check failed' }; \
+    Remove-Item -LiteralPath C:\ProgramData\unity -Recurse -Force -ErrorAction SilentlyContinue
 
-# PowerShell
-ARG POWERSHELL_MAJOR=7
-
-ADD https://api.github.com/repos/PowerShell/PowerShell/releases?per_page=100 C:/powershell-releases.json
-
-RUN $releases = Get-Content C:/powershell-releases.json -Raw | ConvertFrom-Json; \
-    $release = $releases | \
-      Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match ('^v' + $env:POWERSHELL_MAJOR + '\.\d+\.\d+$') } | \
-      Sort-Object { [version]$_.tag_name.Substring(1) } | \
-      Select-Object -Last 1; \
-    if (-not $release) { throw ('No stable PowerShell ' + $env:POWERSHELL_MAJOR + ' release found') }; \
-    $powershellVersion = $release.tag_name.Substring(1); \
-    $archiveName = 'PowerShell-' + $powershellVersion + '-win-x64.zip'; \
-    $archive = 'C:/' + $archiveName; \
-    $asset = $release.assets | Where-Object name -eq $archiveName; \
-    $hashesAsset = $release.assets | Where-Object name -eq 'hashes.sha256'; \
-    if (-not $asset -or -not $hashesAsset) { throw ('PowerShell ' + $powershellVersion + ' release assets are incomplete') }; \
-    curl.exe -fsSL $asset.browser_download_url -o $archive; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to download PowerShell' }; \
-    curl.exe -fsSL $hashesAsset.browser_download_url -o C:/powershell-hashes; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to download PowerShell hashes' }; \
-    $hashLine = Get-Content C:/powershell-hashes | Where-Object { $_ -match ('\*' + [regex]::Escape($archiveName) + '$') }; \
-    if (-not $hashLine) { throw ('No checksum found for ' + $archiveName) }; \
-    $expectedHash = ($hashLine -split '\s+')[0]; \
-    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash; \
-    if ($actualHash -ne $expectedHash) { throw ('Checksum verification failed for ' + $archiveName) }; \
-    $destination = 'C:/Program Files/PowerShell/7'; \
-    New-Item -ItemType Directory -Force $destination | Out-Null; \
-    Expand-Archive -LiteralPath $archive -DestinationPath $destination; \
-    Remove-Item -LiteralPath $archive,C:/powershell-hashes,C:/powershell-releases.json; \
-    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); \
-    [Environment]::SetEnvironmentVariable('Path', ($destination + ';' + $machinePath), 'Machine'); \
-    $env:Path = $destination + ';' + $env:Path; \
-    pwsh -NoLogo -NoProfile -Command \
-        'if ($PSVersionTable.PSVersion.Major -ne [int]$env:POWERSHELL_MAJOR) { exit 1 }'; \
-    if ($LASTEXITCODE -ne 0) { throw 'PowerShell smoke check failed' }
-
-VOLUME ["C:/Program Files/Unity/Hub/Editor", "C:/steam", "C:/Users/ContainerAdministrator/AppData/Roaming/Unity", "C:/Users/ContainerAdministrator/AppData/Roaming/UnityHub", "C:/Users/ContainerAdministrator/AppData/Local/Unity", "C:/ProgramData/Unity"]
+VOLUME ["C:/Program Files/Unity/Hub/Editor", "C:/Users/ContainerAdministrator/AppData/Roaming/Unity", "C:/Users/ContainerAdministrator/AppData/Roaming/UnityHub", "C:/Users/ContainerAdministrator/AppData/Local/Unity", "C:/ProgramData/Unity"]
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD ["compose-unity", "sidecar", "health"]
+    CMD ["unity-sidecar", "health"]
 
-CMD ["compose-unity", "sidecar"]
+CMD ["unity-sidecar"]

@@ -7,37 +7,8 @@ WORKDIR /solution
 COPY . .
 
 RUN set -eux; \
-    case "$TARGETARCH" in \
-      amd64) runtime_id="linux-x64" ;; \
-      arm64) runtime_id="linux-arm64" ;; \
-      *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
-    esac; \
-    dotnet publish \
-        --configuration Release \
-        --runtime "$runtime_id" \
-        --self-contained true \
-        --property:PublishSingleFile=true \
-        --property:UseAppHost=true \
-        --property:DebugType=None
-
-FROM debian:trixie-slim AS steamcmd-installer
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-# Valve distributes the x64 client through a 32-bit self-updating bootstrapper.
-RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl lib32gcc-s1 qemu-user; \
-    install -m 0755 -d /opt/steamcmd; \
-    curl -fsSL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" -o /tmp/steamcmd.tar.gz; \
-    tar -xzf /tmp/steamcmd.tar.gz -C /opt/steamcmd; \
-    rm -f /tmp/steamcmd.tar.gz; \
-    bootstrap_status=0; \
-    (cd /opt/steamcmd && DEBUGGER=qemu-i386 ./steamcmd.sh +quit) || bootstrap_status="$?"; \
-    case "$bootstrap_status" in 0|139) ;; *) exit "$bootstrap_status" ;; esac; \
-    test -x /opt/steamcmd/linux64/steamcmd; \
-    cd /opt/steamcmd; \
-    ./linux64/steamcmd +quit
+    test "$TARGETARCH" = "amd64"; \
+    dotnet publish --runtime linux-x64
 
 FROM debian:trixie-slim
 
@@ -49,69 +20,20 @@ COPY linux/machine-id /etc/machine-id
 
 WORKDIR /var/workspace
 
-# Unity Licensing Client uses .NET globalization and fails fast without ICU.
-# Base tools + locale
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        git \
-        git-lfs \
-        gnupg \
-        locales \
-        nano \
-        pciutils \
-        util-linux \
-        wget \
-        zip \
-        unzip \
-        xz-utils \
-        libxfixes3 \
-        libxi6 \
-        libxxf86vm1 \
-        libxrender1 \
-        libxkbcommon0 \
-        libsm6 \
-        libice6 \
-        libgl1 \
-        libegl1 \
-        libdbus-1-3 \
-        libfontconfig1 \
-        libfreetype6 \
-        libicu76 && \
+COPY linux/unity.packages /tmp/unity.packages
+RUN apt-get update && \
+    xargs apt-get install -y --no-install-recommends < /tmp/unity.packages && \
     echo "$LANG UTF-8" > /etc/locale.gen && \
     locale-gen "$LANG" && \
     install -m 0755 -d /etc/apt/keyrings && \
+    rm -f /tmp/unity.packages && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     git config --global --add safe.directory * && \
     curl --version && \
     ldconfig -p | grep -q 'libicuuc\.so'
-
-# NodeJS
-ARG NODE_VERSION=24
-ENV NODE_VERSION="${NODE_VERSION}"
-RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    node --version && \
-    test "$(node --version | cut -d. -f1)" = "v${NODE_VERSION}" && \
-    npm --version
-
-# itch.io
-RUN curl -fsSL "https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default" -o /tmp/butler.zip && \
-    unzip /tmp/butler.zip -d /tmp/butler && \
-    chmod +x /tmp/butler/butler && \
-    mv /tmp/butler/butler /usr/local/bin/butler && \
-    rm -rf /tmp/butler /tmp/butler.zip && \
-    butler --help
-
-# Steam SDK
-COPY --from=steamcmd-installer /opt/steamcmd /opt/steamcmd
-RUN ln -s /opt/steamcmd/linux64/steamcmd /usr/local/bin/steamcmd && \
-    steamcmd +quit
 
 # PHP
 ENV PHP_VERSION=8.4
@@ -161,12 +83,8 @@ RUN dotnet tool update -g docfx && \
 ARG BLENDER_SERIES=4.5
 
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) blender_arch="x64" ;; \
-      arm64) blender_arch="arm64" ;; \
-      *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
-    esac; \
+    test "$(dpkg --print-architecture)" = "amd64"; \
+    blender_arch="x64"; \
     base_url="https://download.blender.org/release/Blender${BLENDER_SERIES}/"; \
     version="$(curl -fsSL "$base_url" \
       | grep -oE "blender-${BLENDER_SERIES}\.[0-9]+-linux-${blender_arch}\.tar\.xz" \
@@ -189,19 +107,8 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
         > /etc/apt/sources.list.d/unityhub.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        cpio \
-        desktop-file-utils \
-        ffmpeg \
-        libasound2 \
-        libc6-dev \
-        libgbm-dev \
-        libglu1-mesa \
-        p7zip-full \
-        python3 \
         unityhub=3.12.1 \
-        xauth \
-        xvfb \
-        xz-utils && \
+        libc6-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -227,38 +134,37 @@ RUN echo "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Farah
-ENV COMPOSE_UNITY="compose-unity"
+ENV UNITY="unity"
 ENV COMPOSER_ALLOW_SUPERUSER="1"
+ENV COMPOSER="/unity/composer.json"
+ENV COMPOSER_VENDOR_DIR="/unity/vendor"
 
 ENV UNITY_LOGGING="stdin stdout stderr"
 ENV UNITY_ACCELERATOR_ENDPOINT=""
 ENV UNITY_NO_GRAPHICS="1"
 
 COPY --chmod=755 --from=composer:2 /usr/bin/composer /usr/local/bin/composer
-COPY --chmod=755 --from=build /solution/common/ComposeUnity/bin/Release/net9.0/linux-*/publish/compose-unity /usr/local/bin/compose-unity
-RUN ln -s compose-unity /usr/local/bin/compose-unity-sidecar
+COPY --chmod=755 --from=build /solution/common/Unity/bin/Release/net9.0/linux-x64/publish/unity /usr/local/bin/unity
+RUN ln /usr/local/bin/unity /usr/local/bin/unity-sidecar
 
-ENV COMPOSE_UNITY_CALL_TIMEOUT="86400"
-ENV COMPOSE_UNITY_MCP="0"
+ENV UNITY_CALL_TIMEOUT="86400"
+ENV UNITY_MCP="0"
 
 ARG UNITY_TIMEOUT="14400"
-ARG SLOTHSOFT_UNITY_VERSION=2.22
-RUN install -m 0755 -d /compose-unity && \
-    compose-unity require "slothsoft/unity:^${SLOTHSOFT_UNITY_VERSION}" && \
-    compose-unity config process-timeout "$UNITY_TIMEOUT" && \
-    compose-unity update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative
+RUN install -m 0755 -d /unity && \
+    composer require "slothsoft/unity" && \
+    composer config process-timeout "$UNITY_TIMEOUT" && \
+    composer update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative
 
 # Test
-RUN compose-unity exec unity-build && \
-    compose-unity exec unity-help && \
-    rm -rf /run/compose-unity
+RUN unity --help && \
+    rm -rf /run/unity
 
-VOLUME ["/root/Unity", "/root/Steam", "/root/.config/unity3d", "/root/.config/unityhub", "/root/.cache/Unity", "/root/.local/share/unity3d"]
+VOLUME ["/root/Unity", "/root/.config/unity3d", "/root/.config/unityhub", "/root/.cache/Unity", "/root/.local/share/unity3d"]
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD ["compose-unity", "sidecar", "health"]
+    CMD ["unity-sidecar", "health"]
 
-CMD ["compose-unity", "sidecar"]
+CMD ["unity-sidecar"]

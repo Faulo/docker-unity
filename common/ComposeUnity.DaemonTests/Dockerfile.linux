@@ -1,9 +1,0 @@
-FROM mcr.microsoft.com/dotnet/runtime:9.0-bookworm-slim
-COPY --chmod=755 controller/compose-unity /usr/local/bin/compose-unity-controller
-COPY --chmod=755 backend/compose-unity /usr/local/bin/compose-unity
-RUN ln -s compose-unity /usr/local/bin/composer
-ENV COMPOSE_UNITY_CALL_TIMEOUT=30
-EXPOSE 8080
-HEALTHCHECK --interval=1s --timeout=5s --start-period=1s --retries=30 \
-    CMD ["compose-unity-controller", "sidecar", "health"]
-CMD ["compose-unity-controller", "sidecar"]

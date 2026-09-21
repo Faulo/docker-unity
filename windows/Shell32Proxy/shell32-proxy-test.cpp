@@ -15,7 +15,7 @@ extern "C" void mainCRTStartup()
 {
     wchar_t executable[MAX_PATH]{};
     const HINSTANCE findResult = ::FindExecutableW(
-        L"C:\\compose-unity-nonexistent.blend",
+        L"C:\\unity-nonexistent.blend",
         nullptr,
         executable);
     if (reinterpret_cast<INT_PTR>(findResult) <= 32 || executable[0] == L'\0')

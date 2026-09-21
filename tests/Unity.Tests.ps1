@@ -64,9 +64,8 @@ Describe "Docker image command contract [$Os, $Image]" {
     }
 
     It 'declares the exact default sidecar command' {
-        $defaultCommand.Count | Should -Be 2
-        $defaultCommand[0] | Should -BeExactly 'compose-unity'
-        $defaultCommand[1] | Should -BeExactly 'sidecar'
+        $defaultCommand.Count | Should -Be 1
+        $defaultCommand[0] | Should -BeExactly 'unity-sidecar'
     }
 
     It 'allows an arbitrary command to replace the default command' {
@@ -76,7 +75,7 @@ Describe "Docker image command contract [$Os, $Image]" {
     }
 
     It 'keeps the Docker Pipeline keeper running' {
-        $containerName = "compose-unity-keeper-$([guid]::NewGuid().ToString('N'))"
+        $containerName = "unity-keeper-$([guid]::NewGuid().ToString('N'))"
 
         try {
             Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments @(
@@ -95,7 +94,7 @@ Describe "Docker image command contract [$Os, $Image]" {
     }
 
     It 'starts the sidecar when no command is supplied' {
-        $containerName = "compose-unity-sidecar-$([guid]::NewGuid().ToString('N'))"
+        $containerName = "unity-sidecar-$([guid]::NewGuid().ToString('N'))"
 
         try {
             Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments @(
@@ -105,7 +104,7 @@ Describe "Docker image command contract [$Os, $Image]" {
             $healthResult = $null
             for ($attempt = 1; $attempt -le 30; $attempt++) {
                 $healthResult = Get-DockerCommandResult -Context $Context -Arguments @(
-                    'container', 'exec', $containerName, 'compose-unity', 'sidecar', 'health'
+                    'container', 'exec', $containerName, 'unity-sidecar', 'health'
                 )
                 if ($healthResult.ExitCode -eq 0) {
                     break
@@ -124,6 +123,53 @@ Describe "Docker image command contract [$Os, $Image]" {
     }
 }
 
+Describe "Unity image identity and contents [$Os, $Image]" {
+    It 'provides PHP 8.4' {
+        $result = Get-DockerCommandResult -Context $Context -RunArguments $DockerRunArguments -Arguments @(
+            'run', '--rm', $Image,
+            'php', '-r', 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;'
+        )
+        $result.ExitCode | Should -Be 0 -Because ($result.Output | Out-String)
+        ($result.Output | Out-String).Trim() | Should -BeExactly '8.4'
+    }
+
+    It 'provides the public Unity commands' {
+        $command = if ($Os -eq 'windows') {
+            @('cmd.exe', '/S', '/C', 'where unity.exe && where unity-sidecar.exe')
+        } else {
+            @('sh', '-c', 'command -v unity && command -v unity-sidecar')
+        }
+
+        Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments (@(
+            'run', '--rm', $Image
+        ) + $command)
+    }
+
+    It 'does not expose compatibility-line commands or removed tools' {
+        $command = if ($Os -eq 'windows') {
+            @(
+                'pwsh', '-NoLogo', '-NoProfile', '-Command',
+                '$names = @("compose-unity", "compose-unity-sidecar", "butler", "steamcmd", "node", "npm"); foreach ($name in $names) { if (Get-Command $name -ErrorAction SilentlyContinue) { throw "$name must not be installed" } }'
+            )
+        } else {
+            @('sh', '-c', 'for name in compose-unity compose-unity-sidecar butler steamcmd node npm; do ! command -v "$name" || exit 1; done')
+        }
+
+        Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments (@(
+            'run', '--rm', $Image
+        ) + $command)
+    }
+
+    It 'does not publish compatibility-line configuration or Steam volumes' {
+        $imageConfig = Invoke-DockerOutput -Context $Context -Arguments @(
+            'image', 'inspect', '--format', '{{json .Config}}', $Image
+        ) | ConvertFrom-Json
+        @($imageConfig.Env | Where-Object { $_ -like 'COMPOSE_UNITY_*' }).Count | Should -Be 0
+        @($imageConfig.Volumes.PSObject.Properties.Name | Where-Object { $_ -match '(?i)steam' }).Count | Should -Be 0
+        $imageConfig.WorkingDir | Should -Not -Match '(?i)compose-unity'
+    }
+}
+
 Describe "Unity behavior [$Os, $Image]" {
     Context 'with Unity <UnityVersion>' -ForEach @(
         $unityVersions | ForEach-Object { @{ UnityVersion = $_ } }
@@ -131,7 +177,7 @@ Describe "Unity behavior [$Os, $Image]" {
         It 'runs the empty project tests' {
             Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments @(
                 'run', '--rm', $Image,
-                'compose-unity', 'exec', 'unity-empty-project', 'test', $UnityVersion
+                'unity', 'empty-project', 'test', $UnityVersion
             )
         }
 
@@ -144,7 +190,7 @@ Describe "Unity behavior [$Os, $Image]" {
 
             Invoke-Docker -Context $Context -RunArguments ($DockerRunArguments + $gpuArguments) -Arguments @(
                 'run', '--rm', $Image,
-                'compose-unity', 'exec', 'unity-empty-project', 'test', $UnityVersion
+                'unity', 'empty-project', 'test', $UnityVersion
             )
         }
     }

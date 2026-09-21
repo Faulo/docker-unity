@@ -1,0 +1,9 @@
+FROM mcr.microsoft.com/dotnet/runtime:9.0-bookworm-slim
+COPY --chmod=755 controller/unity /usr/local/bin/unity
+RUN ln /usr/local/bin/unity /usr/local/bin/unity-sidecar
+COPY --chmod=755 backend/unity /usr/local/bin/composer
+ENV UNITY_CALL_TIMEOUT=30
+EXPOSE 8080
+HEALTHCHECK --interval=1s --timeout=5s --start-period=1s --retries=30 \
+    CMD ["unity-sidecar", "health"]
+CMD ["unity-sidecar"]
