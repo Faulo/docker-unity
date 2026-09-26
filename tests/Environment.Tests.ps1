@@ -51,7 +51,7 @@ Describe "Docker integration environment [$Context, $Image]" {
             $compatibilityImage = "$Namespace/$Name`:$tag"
             if ($Pull) {
                 Invoke-Docker -Context $Context -Arguments @(
-                    'buildx', 'imagetools', 'inspect', $compatibilityImage
+                    'manifest', 'inspect', $compatibilityImage
                 )
             } else {
                 Invoke-Docker -Context $Context -Arguments @(
