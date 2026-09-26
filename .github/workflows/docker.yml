@@ -109,7 +109,7 @@ jobs:
 
     publish:
         needs: configuration
-        uses: Faulo/workflows-docker/.github/workflows/publish.yml@v1
+        uses: Faulo/workflows-docker/.github/workflows/publish.yml@v1.2.0
         with:
             image: ${{needs.configuration.outputs.image}}
             linux_context: .

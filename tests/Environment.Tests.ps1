@@ -18,6 +18,9 @@ param(
     [string] $Os,
 
     [Parameter(Mandatory)]
+    [bool] $Pull,
+
+    [Parameter(Mandatory)]
     [AllowEmptyCollection()]
     [string[]] $DockerRunArguments
 )
@@ -33,5 +36,28 @@ Describe "Docker integration environment [$Context, $Image]" {
 
     It "has image $Image" {
         Invoke-Docker -Context $Context -Arguments @('image', 'inspect', $Image)
+    }
+
+    It 'publishes the operating-system compatibility tags' {
+        $compatibilityTags = if ($Pull) {
+            @('latest-linux', 'latest-windows', 'latest-windows-ltsc2019')
+        } elseif ($Os -eq 'windows') {
+            @('latest-windows', 'latest-windows-ltsc2019')
+        } else {
+            @('latest-linux')
+        }
+
+        foreach ($tag in $compatibilityTags) {
+            $compatibilityImage = "$Namespace/$Name`:$tag"
+            if ($Pull) {
+                Invoke-Docker -Context $Context -Arguments @(
+                    'buildx', 'imagetools', 'inspect', $compatibilityImage
+                )
+            } else {
+                Invoke-Docker -Context $Context -Arguments @(
+                    'image', 'inspect', $compatibilityImage
+                )
+            }
+        }
     }
 }

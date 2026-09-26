@@ -4,16 +4,18 @@ Cross-platform Unity build and test image for Linux and Windows. Published image
 
 ## Included tools
 
-Both variants include Unity Hub, the `unity` command stack, Git and Git LFS, PHP 8.4 and Composer, .NET SDK and DocFX, Python, FFmpeg, Blender, Nano, Zip, and PowerShell. The Linux base packages are declared in [`linux/unity.packages`](linux/unity.packages); Windows dependencies are declared in [`windows/unity.nuspec`](windows/unity.nuspec). Windows installs the current official PECL IMAP build because PHP 8.4 no longer bundles it.
+Both variants include Unity Hub, the `unity` command stack, Git and Git LFS, PHP 8.4 and Composer, .NET SDK and DocFX, Python, FFmpeg, Blender, Nano, and Zip. Windows also includes PowerShell. The Linux base packages are declared in [`linux/unity.packages`](linux/unity.packages); Windows dependencies are declared in [`windows/unity.nuspec`](windows/unity.nuspec). Windows installs the current official PECL IMAP build because PHP 8.4 no longer bundles it.
 
 Node.js, npm, Butler, and SteamCMD are intentionally not included.
 
 ## Image variants
 
-- `faulo/unity:latest` and `faulo/unity:linux`
-- `faulo/unity:windows-ltsc2019`
+- `faulo/unity:latest` is the primary multi-platform image.
+- `faulo/unity:latest-linux` targets the complete Linux platform set.
+- `faulo/unity:latest-windows` targets every published Windows base variant.
+- `faulo/unity:latest-windows-ltsc2019` targets Windows Server 2019 specifically.
 
-Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
+The `latest-*` tags are compatibility aliases for clients that need to avoid resolving unrelated platforms from the primary manifest. Integration tests normally target `latest`. Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
 
 ## Build arguments
 
@@ -37,14 +39,14 @@ The public `unity` executable forwards its arguments to `composer exec unity-com
 
 ## Credentials
 
-Unity credentials can be provided at container startup with:
+Unity credentials must be injected by Jenkins or the host environment, not written into a Unity Docker Compose definition. They can be provided at container startup with:
 
 - `UNITY_CREDENTIALS_USR` and `UNITY_CREDENTIALS_PSW`
 - `UNITY_CREDENTIALS_USR_FILE` and `UNITY_CREDENTIALS_PSW_FILE`
 
 Optional email credentials use the equivalent `EMAIL_CREDENTIALS_USR`, `EMAIL_CREDENTIALS_PSW`, `EMAIL_CREDENTIALS_USR_FILE`, and `EMAIL_CREDENTIALS_PSW_FILE` variables.
 
-When MCP mode is enabled, credentials can instead be configured or rotated at runtime with the `configure_credentials` tool. Updates are atomic, affect subsequent worker containers, and never return secret values.
+When MCP mode is enabled, credentials can instead be configured or rotated in memory at runtime with the `configure_credentials` tool. Updates are atomic, affect subsequent worker executions including retained containers, and never return secret values.
 
 ## Sidecar and MCP
 
@@ -83,7 +85,10 @@ Candidate images must use the disposable namespace:
 
 ```console
 docker --context garl build --file linux/Dockerfile --tag tmp/unity:latest .
-docker --context dende build --file windows/Dockerfile --tag tmp/unity:windows-ltsc2019 .
+docker --context dende build --file windows/Dockerfile --tag tmp/unity:latest .
+docker --context garl image tag tmp/unity:latest tmp/unity:latest-linux
+docker --context dende image tag tmp/unity:latest tmp/unity:latest-windows
+docker --context dende image tag tmp/unity:latest tmp/unity:latest-windows-ltsc2019
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context dende
 ```
