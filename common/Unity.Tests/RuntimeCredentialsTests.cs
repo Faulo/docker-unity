@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 
 namespace Unity.Tests;
 
@@ -99,18 +98,16 @@ public sealed class RuntimeCredentialsTests {
         Assert.That(exception!.Message, Does.Contain("EMAIL_CREDENTIALS_USR_FILE").And.Contain("empty"));
     }
 
-    [TestCase("UNITY_CREDENTIALS_USR", "UNITY_CREDENTIALS_PSW")]
-    [TestCase("EMAIL_CREDENTIALS_USR", "EMAIL_CREDENTIALS_PSW")]
-    public void RejectsIncompleteCredentialPair(string present, string missing) {
+    [TestCase("UNITY_CREDENTIALS_USR")]
+    [TestCase("UNITY_CREDENTIALS_PSW")]
+    [TestCase("EMAIL_CREDENTIALS_USR")]
+    [TestCase("EMAIL_CREDENTIALS_PSW")]
+    public void PreservesIncompleteCredentialInput(string present) {
         var environment = new Dictionary<string, string?> { [present] = "configured-secret" };
 
-        var exception = Assert.Throws<InvalidOperationException>(() => Resolve(environment, _ => throw new InvalidOperationException()));
+        var credentials = Resolve(environment, _ => throw new InvalidOperationException());
 
-        Assert.Multiple(() => {
-            Assert.That(exception!.Message, Does.Contain(present));
-            Assert.That(exception.Message, Does.Contain(missing));
-            Assert.That(exception.Message, Does.Not.Contain("configured-secret"));
-        });
+        Assert.That(credentials.WorkerEnvironment(), Is.EqualTo(new[] { $"{present}=configured-secret" }));
     }
 
     [Test]
@@ -165,54 +162,40 @@ public sealed class RuntimeCredentialsTests {
     }
 
     [Test]
-    public void RuntimeUpdateAtomicallyReplacesThePreviousSnapshot() {
-        var store = new RuntimeCredentialStore(RuntimeCredentials.FromRuntime(
-            "old-unity-user",
-            "old-unity-password",
-            null,
-            null));
+    public void RequestHeadersOverrideIndividualFallbackValuesWithoutRequiringPairs() {
+        var environment = new Dictionary<string, string?> {
+            ["UNITY_CREDENTIALS_USR"] = "fallback-unity-user",
+            ["UNITY_CREDENTIALS_PSW"] = "fallback-unity-password",
+            ["EMAIL_CREDENTIALS_USR"] = "fallback-email-user"
+        };
+        var headers = new Dictionary<string, string?> {
+            [RuntimeCredentials.UNITY_USERNAME_HEADER] = "client-unity-user",
+            [RuntimeCredentials.EMAIL_PASSWORD_HEADER] = "client-email-password"
+        };
 
-        object result = store.Configure(
-            "new-unity-user",
-            "new-unity-password",
-            "new-email-user",
-            "new-email-password");
+        var request = Resolve(environment, _ => throw new InvalidOperationException())
+            .WithRequestHeaders(name => headers.TryGetValue(name, out string? value) ? value : null);
 
-        Assert.Multiple(() => {
-            Assert.That(store.Snapshot().WorkerEnvironment(), Is.EqualTo(new[] {
-                "UNITY_CREDENTIALS_USR=new-unity-user",
-                "UNITY_CREDENTIALS_PSW=new-unity-password",
-                "EMAIL_CREDENTIALS_USR=new-email-user",
-                "EMAIL_CREDENTIALS_PSW=new-email-password"
-            }));
-            string response = JsonSerializer.Serialize(result);
-            Assert.That(response, Does.Not.Contain("new-unity-user"));
-            Assert.That(response, Does.Not.Contain("new-unity-password"));
-            Assert.That(response, Does.Not.Contain("new-email-user"));
-            Assert.That(response, Does.Not.Contain("new-email-password"));
-        });
+        Assert.That(request.WorkerEnvironment(), Is.EqualTo(new[] {
+            "UNITY_CREDENTIALS_USR=client-unity-user",
+            "UNITY_CREDENTIALS_PSW=fallback-unity-password",
+            "EMAIL_CREDENTIALS_USR=fallback-email-user",
+            "EMAIL_CREDENTIALS_PSW=client-email-password"
+        }));
     }
 
-    [TestCase(null, "email-password")]
-    [TestCase("email-user", null)]
-    [TestCase("", "email-password")]
-    [TestCase("email-user", "")]
-    public void RejectedRuntimeUpdateKeepsThePreviousSnapshot(string? emailUsername, string? emailPassword) {
-        var store = new RuntimeCredentialStore(RuntimeCredentials.FromRuntime(
-            "old-unity-user",
-            "old-unity-password",
-            null,
-            null));
+    [Test]
+    public void EmptyRequestHeaderClearsItsIndividualFallback() {
+        var environment = new Dictionary<string, string?> {
+            ["UNITY_CREDENTIALS_USR"] = "fallback-unity-user",
+            ["UNITY_CREDENTIALS_PSW"] = "fallback-unity-password"
+        };
 
-        Assert.Throws<InvalidOperationException>(() => store.Configure(
-            "new-unity-user",
-            "new-unity-password",
-            emailUsername,
-            emailPassword));
+        var request = Resolve(environment, _ => throw new InvalidOperationException())
+            .WithRequestHeaders(name => name == RuntimeCredentials.UNITY_USERNAME_HEADER ? string.Empty : null);
 
-        Assert.That(store.Snapshot().WorkerEnvironment(), Is.EqualTo(new[] {
-            "UNITY_CREDENTIALS_USR=old-unity-user",
-            "UNITY_CREDENTIALS_PSW=old-unity-password"
+        Assert.That(request.WorkerEnvironment(), Is.EqualTo(new[] {
+            "UNITY_CREDENTIALS_PSW=fallback-unity-password"
         }));
     }
 

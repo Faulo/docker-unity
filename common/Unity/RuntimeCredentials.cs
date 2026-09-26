@@ -4,9 +4,16 @@ using System.Security;
 namespace Unity;
 
 sealed class RuntimeCredentials {
+    internal const string UNITY_USERNAME_HEADER = "X-Unity-Credentials-Usr";
+    internal const string UNITY_PASSWORD_HEADER = "X-Unity-Credentials-Psw";
+    internal const string EMAIL_USERNAME_HEADER = "X-Email-Credentials-Usr";
+    internal const string EMAIL_PASSWORD_HEADER = "X-Email-Credentials-Psw";
+
     static readonly CredentialPair[] pairs = [
-        new("Unity", "UNITY_CREDENTIALS_USR", "UNITY_CREDENTIALS_PSW"),
-        new("Email", "EMAIL_CREDENTIALS_USR", "EMAIL_CREDENTIALS_PSW")
+        new("UNITY_CREDENTIALS_USR", UNITY_USERNAME_HEADER),
+        new("UNITY_CREDENTIALS_PSW", UNITY_PASSWORD_HEADER),
+        new("EMAIL_CREDENTIALS_USR", EMAIL_USERNAME_HEADER),
+        new("EMAIL_CREDENTIALS_PSW", EMAIL_PASSWORD_HEADER)
     ];
 
     readonly IReadOnlyDictionary<string, string> values;
@@ -25,60 +32,40 @@ sealed class RuntimeCredentials {
         Func<string, string> readFile) {
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var pair in pairs) {
-            ResolveValue(pair.user, values, readEnvironment, readFile);
-            ResolveValue(pair.password, values, readEnvironment, readFile);
-
-            bool hasUser = values.ContainsKey(pair.user);
-            bool hasPassword = values.ContainsKey(pair.password);
-            if (hasUser != hasPassword) {
-                throw new InvalidOperationException(
-                    $"{pair.description} credentials require both {pair.user} and {pair.password} after resolving direct and _FILE inputs.");
-            }
+            ResolveValue(pair.environment, values, readEnvironment, readFile);
         }
 
         return values.Count == 0 ? empty : new RuntimeCredentials(values);
     }
 
-    internal static RuntimeCredentials FromRuntime(
-        string unityUsername,
-        string unityPassword,
-        string? emailUsername,
-        string? emailPassword) {
-        if (string.IsNullOrEmpty(unityUsername) || string.IsNullOrEmpty(unityPassword)) {
-            throw new InvalidOperationException("Runtime Unity credentials require a non-empty username and password.");
+    internal RuntimeCredentials WithRequestHeaders(Func<string, string?> readHeader) {
+        var merged = new Dictionary<string, string>(values, StringComparer.Ordinal);
+        foreach (var pair in pairs) {
+            string? value = readHeader(pair.header);
+            if (value is null) {
+                continue;
+            }
+
+            if (value.Length == 0) {
+                merged.Remove(pair.environment);
+            } else {
+                merged[pair.environment] = value;
+            }
         }
 
-        bool hasEmailUsername = emailUsername is not null;
-        bool hasEmailPassword = emailPassword is not null;
-        if (hasEmailUsername != hasEmailPassword
-            || (hasEmailUsername && (emailUsername!.Length == 0 || emailPassword!.Length == 0))) {
-            throw new InvalidOperationException("Runtime email credentials must be omitted or supplied as a complete non-empty pair.");
-        }
-
-        var values = new Dictionary<string, string>(StringComparer.Ordinal) {
-            ["UNITY_CREDENTIALS_USR"] = unityUsername,
-            ["UNITY_CREDENTIALS_PSW"] = unityPassword
-        };
-        if (hasEmailUsername) {
-            values["EMAIL_CREDENTIALS_USR"] = emailUsername!;
-            values["EMAIL_CREDENTIALS_PSW"] = emailPassword!;
-        }
-
-        return new RuntimeCredentials(values);
+        return merged.Count == 0 ? empty : new RuntimeCredentials(merged);
     }
 
     internal void ApplyTo(ProcessStartInfo startInfo) {
         foreach (var pair in pairs) {
-            ApplyValue(startInfo.Environment, pair.user);
-            ApplyValue(startInfo.Environment, pair.password);
+            ApplyValue(startInfo.Environment, pair.environment);
         }
     }
 
     internal IReadOnlyList<string> WorkerEnvironment() {
         var environment = new List<string>();
         foreach (var pair in pairs) {
-            AddEnvironmentValue(environment, pair.user);
-            AddEnvironmentValue(environment, pair.password);
+            AddEnvironmentValue(environment, pair.environment);
         }
 
         return environment;
@@ -134,28 +121,5 @@ sealed class RuntimeCredentials {
         }
     }
 
-    sealed record CredentialPair(string description, string user, string password);
-}
-
-sealed class RuntimeCredentialStore(RuntimeCredentials seed) {
-    RuntimeCredentials snapshot = seed;
-
-    internal RuntimeCredentials Snapshot() => Volatile.Read(ref snapshot);
-
-    internal object Configure(
-        string unityUsername,
-        string unityPassword,
-        string? emailUsername,
-        string? emailPassword) {
-        var replacement = RuntimeCredentials.FromRuntime(
-            unityUsername,
-            unityPassword,
-            emailUsername,
-            emailPassword);
-        Volatile.Write(ref snapshot, replacement);
-        return new {
-            unityConfigured = true,
-            emailConfigured = emailUsername is not null
-        };
-    }
+    sealed record CredentialPair(string environment, string header);
 }

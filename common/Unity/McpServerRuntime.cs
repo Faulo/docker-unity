@@ -168,28 +168,6 @@ sealed class McpServerRuntime : IAsyncDisposable {
 [McpServerToolType]
 sealed class UnityMcpTools(UnityMcpController controller, IHttpContextAccessor contexts) {
     [McpServerTool(
-        Name = "configure_credentials",
-        ReadOnly = false,
-        Destructive = false,
-        Idempotent = true,
-        OpenWorld = false,
-        UseStructuredContent = true)]
-    [Description(
-        "Atomically replace the in-memory credentials used by subsequent Unity worker executions. " +
-        "Unity credentials are required; email credentials must be omitted or supplied as a complete pair. " +
-        "Credential values are never returned or persisted.")]
-    public object ConfigureCredentials(
-        [Description("Unity account username.")]
-        string unityUsername,
-        [Description("Unity account password.")]
-        string unityPassword,
-        [Description("Optional email account username; requires emailPassword when supplied.")]
-        string? emailUsername = null,
-        [Description("Optional email account password; requires emailUsername when supplied.")]
-        string? emailPassword = null) =>
-        controller.ConfigureCredentials(unityUsername, unityPassword, emailUsername, emailPassword);
-
-    [McpServerTool(
         Name = "get_project_info",
         ReadOnly = true,
         Destructive = false,
@@ -222,7 +200,7 @@ sealed class UnityMcpTools(UnityMcpController controller, IHttpContextAccessor c
         string[] modes,
         IProgress<ProgressNotificationValue> progress,
         CancellationToken cancellationToken) =>
-        await InvokeAsync(() => controller.RunTestsAsync(projectRoot, modes, progress, cancellationToken));
+        await InvokeAsync(() => controller.RunTestsAsync(projectRoot, modes, RequestCredentials(), progress, cancellationToken));
 
     [McpServerTool(
         Name = "execute_method",
@@ -243,7 +221,7 @@ sealed class UnityMcpTools(UnityMcpController controller, IHttpContextAccessor c
         CancellationToken cancellationToken,
         [Description("Optional arguments forwarded without shell reinterpretation.")]
         string[]? arguments = null) =>
-        await InvokeAsync(() => controller.ExecuteMethodAsync(projectRoot, method, arguments, progress, cancellationToken));
+        await InvokeAsync(() => controller.ExecuteMethodAsync(projectRoot, method, arguments, RequestCredentials(), progress, cancellationToken));
 
     [McpServerTool(
         Name = "build_and_serve_webgl",
@@ -266,8 +244,16 @@ sealed class UnityMcpTools(UnityMcpController controller, IHttpContextAccessor c
             projectRoot,
             request.Scheme,
             request.Host.Value ?? string.Empty,
+            RequestCredentials(),
             progress,
             cancellationToken));
+    }
+
+    RuntimeCredentials RequestCredentials() {
+        var request = contexts.HttpContext?.Request
+                      ?? throw new McpException("The Unity execution tool requires an HTTP request context.");
+        return controller.RequestCredentials(name =>
+            request.Headers.TryGetValue(name, out var value) ? value.FirstOrDefault() : null);
     }
 
     static async Task<object> InvokeAsync(Func<Task<object>> action) {

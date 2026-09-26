@@ -79,6 +79,11 @@ static int executeMethod(string[] command) {
         return 0;
     }
 
+    string credentialPrefix = command[2] switch {
+        "DaemonTests.ClientA" => "client-a",
+        "DaemonTests.ClientB" => "client-b",
+        _ => "daemon"
+    };
     Console.WriteLine(JsonSerializer.Serialize(new {
         method = command[2],
         arguments = values,
@@ -86,10 +91,10 @@ static int executeMethod(string[] command) {
         composerProject = Environment.GetEnvironmentVariable("COMPOSER"),
         composerVendorDirectory = Environment.GetEnvironmentVariable("COMPOSER_VENDOR_DIR"),
         credentials = new {
-            unity = Environment.GetEnvironmentVariable("UNITY_CREDENTIALS_USR") == "daemon-unity-user"
-                    && Environment.GetEnvironmentVariable("UNITY_CREDENTIALS_PSW") == "daemon-unity-password",
-            email = Environment.GetEnvironmentVariable("EMAIL_CREDENTIALS_USR") == "daemon-email-user"
-                    && Environment.GetEnvironmentVariable("EMAIL_CREDENTIALS_PSW") == "daemon-email-password"
+            unity = Environment.GetEnvironmentVariable("UNITY_CREDENTIALS_USR") == $"{credentialPrefix}-unity-user"
+                    && Environment.GetEnvironmentVariable("UNITY_CREDENTIALS_PSW") == $"{credentialPrefix}-unity-password",
+            email = Environment.GetEnvironmentVariable("EMAIL_CREDENTIALS_USR") == $"{credentialPrefix}-email-user"
+                    && Environment.GetEnvironmentVariable("EMAIL_CREDENTIALS_PSW") == $"{credentialPrefix}-email-password"
         }
     }));
     Console.Error.WriteLine("daemon-test stderr");

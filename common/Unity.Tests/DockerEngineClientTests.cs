@@ -360,12 +360,12 @@ public sealed class DockerEngineClientTests {
         await using var controller = await engine.CreateControllerAsync(credentials, CancellationToken.None);
 
         var progress = new RecordingProgress();
-        object first = await controller.ExecuteMethodAsync(validProject, "Example.Build", ["", "two words", "--"], progress, CancellationToken.None);
-        object second = await controller.ExecuteMethodAsync(validProject, "Example.Build", ["again"], NoProgress.instance, CancellationToken.None);
+        object first = await controller.ExecuteMethodAsync(validProject, "Example.Build", ["", "two words", "--"], credentials, progress, CancellationToken.None);
+        object second = await controller.ExecuteMethodAsync(validProject, "Example.Build", ["again"], credentials, NoProgress.instance, CancellationToken.None);
         int workerCreatesAfterReuse = workerCreates;
         string workerName = configurations.Keys.Single(name => name.StartsWith("unity-worker-", StringComparison.Ordinal));
         configurations[workerName]["Labels"]!["net.slothsoft.unity.worker-configuration"] = "stale";
-        object third = await controller.ExecuteMethodAsync(validProject, "Example.Build", ["after-change"], NoProgress.instance, CancellationToken.None);
+        object third = await controller.ExecuteMethodAsync(validProject, "Example.Build", ["after-change"], credentials, NoProgress.instance, CancellationToken.None);
 
         var firstResult = JsonNode.Parse(JsonSerializer.Serialize(first))!.AsObject();
         var probeMount = probeConfiguration!["HostConfig"]!["Mounts"]![0]!;

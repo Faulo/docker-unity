@@ -124,6 +124,54 @@ Describe "Docker image command contract [$Os, $Image]" {
             ) | Out-Null
         }
     }
+
+    It 'does not expose shared MCP credential mutation' {
+        $containerName = "unity-mcp-contract-$([guid]::NewGuid().ToString('N'))"
+        $dockerMount = if ($Os -eq 'windows') {
+            'type=npipe,source=\\.\pipe\docker_engine,target=\\.\pipe\docker_engine'
+        } else {
+            'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock'
+        }
+
+        try {
+            Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments @(
+                'run', '--detach', '--name', $containerName,
+                '--env', 'UNITY_MCP=1',
+                '--mount', $dockerMount,
+                $Image
+            )
+
+            $healthResult = $null
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+                $healthResult = Get-DockerCommandResult -Context $Context -Arguments @(
+                    'container', 'exec', $containerName, 'unity-sidecar', 'health'
+                )
+                if ($healthResult.ExitCode -eq 0) {
+                    break
+                }
+                Start-Sleep -Seconds 1
+            }
+            $healthResult.ExitCode | Should -Be 0 -Because (
+                "the MCP sidecar must become healthy; output: $($healthResult.Output | Out-String)"
+            )
+
+            $response = Invoke-DockerOutput -Context $Context -Arguments @(
+                'container', 'exec', $containerName,
+                'curl', '--silent', '--show-error', '--fail',
+                '--request', 'POST',
+                '--header', 'Content-Type: application/json',
+                '--header', 'Accept: application/json, text/event-stream',
+                '--data', '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
+                'http://127.0.0.1:8080/mcp'
+            )
+            $response | Should -Match '"tools"'
+            $response | Should -Not -Match 'configure_credentials'
+        } finally {
+            Get-DockerCommandResult -Context $Context -Arguments @(
+                'container', 'rm', '--force', $containerName
+            ) | Out-Null
+        }
+    }
 }
 
 Describe "Unity image identity and contents [$Os, $Image]" {

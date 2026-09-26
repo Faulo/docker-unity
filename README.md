@@ -39,14 +39,30 @@ The public `unity` executable forwards its arguments to `composer exec unity-com
 
 ## Credentials
 
-Unity credentials must be injected by Jenkins or the host environment, not written into a Unity Docker Compose definition. They can be provided at container startup with:
+For a single credential identity, the sidecar and direct `unity` commands accept these container environment variables as fallbacks:
 
 - `UNITY_CREDENTIALS_USR` and `UNITY_CREDENTIALS_PSW`
 - `UNITY_CREDENTIALS_USR_FILE` and `UNITY_CREDENTIALS_PSW_FILE`
 
-Optional email credentials use the equivalent `EMAIL_CREDENTIALS_USR`, `EMAIL_CREDENTIALS_PSW`, `EMAIL_CREDENTIALS_USR_FILE`, and `EMAIL_CREDENTIALS_PSW_FILE` variables.
+Email credentials use the equivalent `EMAIL_CREDENTIALS_USR`, `EMAIL_CREDENTIALS_PSW`, `EMAIL_CREDENTIALS_USR_FILE`, and `EMAIL_CREDENTIALS_PSW_FILE` variables. They are needed when Unity sends its two-factor code by email. Values may come from the host environment, Jenkins, Docker Compose interpolation, or Docker secrets; avoid committing credentials to a Compose file.
 
-When MCP mode is enabled, credentials can instead be configured or rotated in memory at runtime with the `configure_credentials` tool. Updates are atomic, affect subsequent worker executions including retained containers, and never return secret values.
+For a shared MCP server, each client should send credentials with every HTTP request. The four request headers are `X-Unity-Credentials-Usr`, `X-Unity-Credentials-Psw`, `X-Email-Credentials-Usr`, and `X-Email-Credentials-Psw`. A supplied header overrides its corresponding container fallback for that request only. Missing values are allowed through so Unity can report its normal authentication error; the MCP server does not require complete pairs. Request header values are captured only for that tool execution and are not stored in shared controller state, retained worker configuration, labels, logs, or tool results.
+
+Codex can map local environment variables to those headers without putting their values in `config.toml`:
+
+```toml
+[mcp_servers.compose-unity]
+url = "http://127.0.0.1:3310/mcp"
+tool_timeout_sec = 3600
+
+[mcp_servers.compose-unity.env_http_headers]
+X-Unity-Credentials-Usr = "UNITY_CREDENTIALS_USR"
+X-Unity-Credentials-Psw = "UNITY_CREDENTIALS_PSW"
+X-Email-Credentials-Usr = "EMAIL_CREDENTIALS_USR"
+X-Email-Credentials-Psw = "EMAIL_CREDENTIALS_PSW"
+```
+
+Each Codex process reads the named variables from its own environment and sends the resulting headers, so multiple clients can use the same `compose-unity` endpoint with different identities. `env_vars` is not used here because it configures environment forwarding for local stdio MCP servers, not headers for an HTTP MCP server.
 
 ## Sidecar and MCP
 

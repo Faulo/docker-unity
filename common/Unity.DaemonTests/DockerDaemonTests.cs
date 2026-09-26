@@ -69,7 +69,15 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
                 "--name",
                 container,
                 "--env",
-                "UNITY_MCP=1"
+                "UNITY_MCP=1",
+                "--env",
+                "UNITY_CREDENTIALS_USR=daemon-unity-user",
+                "--env",
+                "UNITY_CREDENTIALS_PSW=daemon-unity-password",
+                "--env",
+                "EMAIL_CREDENTIALS_USR=daemon-email-user",
+                "--env",
+                "EMAIL_CREDENTIALS_PSW=daemon-email-password"
             };
             if (expectedOs == "linux") {
                 runArguments.AddRange(["--publish", "127.0.0.1::8080"]);
@@ -84,13 +92,6 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
             await WaitForHealthyControllerAsync();
             await ConfigureMcpClientAsync();
             await InitializeMcpAsync();
-            var configured = await CallToolAsync("configure_credentials", new JsonObject {
-                ["unityUsername"] = "daemon-unity-user",
-                ["unityPassword"] = "daemon-unity-password",
-                ["emailUsername"] = "daemon-email-user",
-                ["emailPassword"] = "daemon-email-password"
-            });
-            Assert.That(configured["result"]!["isError"]?.GetValue<bool>(), Is.Not.True, configured.ToJsonString());
         } catch {
             await CleanupAsync();
             throw;
@@ -124,7 +125,7 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
             .Select(tool => tool!["name"]!.GetValue<string>())
             .Order(StringComparer.Ordinal)
             .ToArray();
-        Assert.That(names, Is.EqualTo(new[] { "build_and_serve_webgl", "configure_credentials", "execute_method", "get_project_info", "run_tests" }));
+        Assert.That(names, Is.EqualTo(new[] { "build_and_serve_webgl", "execute_method", "get_project_info", "run_tests" }));
         var webGlTool = tools["result"]!["tools"]!.AsArray().Single(tool => tool!["name"]!.GetValue<string>() == "build_and_serve_webgl")!;
         Assert.That(webGlTool["inputSchema"]!["properties"]!.AsObject().Select(property => property.Key), Is.EqualTo(new[] { "projectRoot" }));
 
@@ -159,50 +160,47 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
     }
 
     [Test]
-    public async Task AppliesFreshAtomicRuntimeCredentialsToRetainedWorkers() {
-        await ExecuteMethodAsync("DaemonTests.BeforeCredentialUpdate");
+    public async Task IsolatesCredentialsForMultipleClientsUsingTheSameRetainedWorker() {
+        await ExecuteMethodAsync("DaemonTests.Fallback");
         string worker = await SingleWorkerAsync();
 
-        var updated = await CallToolAsync("configure_credentials", new JsonObject {
-            ["unityUsername"] = "replacement-unity-user",
-            ["unityPassword"] = "replacement-unity-password"
-        });
-        Assert.That(updated["result"]!["isError"]?.GetValue<bool>(), Is.Not.True, updated.ToJsonString());
-        using (Assert.EnterMultipleScope()) {
-            string serialized = updated.ToJsonString();
-            Assert.That(serialized, Does.Not.Contain("replacement-unity-user"));
-            Assert.That(serialized, Does.Not.Contain("replacement-unity-password"));
+        var clientA = CallToolAsync("execute_method", new JsonObject {
+            ["projectRoot"] = project,
+            ["method"] = "DaemonTests.ClientA",
+            ["arguments"] = new JsonArray()
+        }, CredentialHeaders("client-a"));
+        var clientB = CallToolAsync("execute_method", new JsonObject {
+            ["projectRoot"] = project,
+            ["method"] = "DaemonTests.ClientB",
+            ["arguments"] = new JsonArray()
+        }, CredentialHeaders("client-b"));
+
+        foreach (var response in await Task.WhenAll(clientA, clientB)) {
+            Assert.That(response["result"]!["isError"]?.GetValue<bool>(), Is.Not.True, response.ToJsonString());
+            var backend = JsonNode.Parse(ToolResult(response)["output"]!.GetValue<string>())!;
+            Assert.Multiple(() => {
+                Assert.That(backend["credentials"]!["unity"]!.GetValue<bool>(), Is.True);
+                Assert.That(backend["credentials"]!["email"]!.GetValue<bool>(), Is.True);
+            });
         }
 
-        var replacementCall = await CallToolAsync("execute_method", new JsonObject {
-            ["projectRoot"] = project,
-            ["method"] = "DaemonTests.AfterCredentialUpdate",
-            ["arguments"] = new JsonArray()
-        });
-        var replacementBackend = JsonNode.Parse(ToolResult(replacementCall)["output"]!.GetValue<string>())!;
-        string workerAfterReplacement = await SingleWorkerAsync();
-        Assert.Multiple(() => {
-            Assert.That(replacementBackend["credentials"]!["unity"]!.GetValue<bool>(), Is.False);
-            Assert.That(replacementBackend["credentials"]!["email"]!.GetValue<bool>(), Is.False);
-            Assert.That(workerAfterReplacement, Is.EqualTo(worker));
-        });
-
-        var rejected = await CallToolAsync("configure_credentials", new JsonObject {
-            ["unityUsername"] = "ignored-unity-user",
-            ["unityPassword"] = "ignored-unity-password",
-            ["emailUsername"] = "partial-email-user"
-        });
-        Assert.That(rejected["result"]!["isError"]?.GetValue<bool>(), Is.True, rejected.ToJsonString());
-
-        var restore = await CallToolAsync("configure_credentials", new JsonObject {
-            ["unityUsername"] = "daemon-unity-user",
-            ["unityPassword"] = "daemon-unity-password",
-            ["emailUsername"] = "daemon-email-user",
-            ["emailPassword"] = "daemon-email-password"
-        });
-        Assert.That(restore["result"]!["isError"]?.GetValue<bool>(), Is.Not.True, restore.ToJsonString());
-        await ExecuteMethodAsync("DaemonTests.AfterCredentialRestore");
         Assert.That(await SingleWorkerAsync(), Is.EqualTo(worker));
+    }
+
+    [Test]
+    public async Task ExecutesWithAnIncompleteRequestCredentialSet() {
+        var response = await CallToolAsync("execute_method", new JsonObject {
+            ["projectRoot"] = project,
+            ["method"] = "DaemonTests.Partial",
+            ["arguments"] = new JsonArray()
+        }, new Dictionary<string, string> { ["X-Unity-Credentials-Usr"] = string.Empty });
+
+        Assert.That(response["result"]!["isError"]?.GetValue<bool>(), Is.Not.True, response.ToJsonString());
+        var backend = JsonNode.Parse(ToolResult(response)["output"]!.GetValue<string>())!;
+        Assert.Multiple(() => {
+            Assert.That(backend["credentials"]!["unity"]!.GetValue<bool>(), Is.False);
+            Assert.That(backend["credentials"]!["email"]!.GetValue<bool>(), Is.True);
+        });
     }
 
     [Test]
@@ -267,8 +265,8 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
             Assert.That(backend["composerVendorDirectory"]!.GetValue<string>(), Is.EqualTo(expectedOs == "windows"
                 ? @"C:\unity\vendor"
                 : "/unity/vendor"));
-            Assert.That(backend["credentials"]!["unity"]!.GetValue<bool>(), Is.False);
-            Assert.That(backend["credentials"]!["email"]!.GetValue<bool>(), Is.False);
+            Assert.That(backend["credentials"]!["unity"]!.GetValue<bool>(), Is.True);
+            Assert.That(backend["credentials"]!["email"]!.GetValue<bool>(), Is.True);
         }
     }
 
@@ -304,20 +302,20 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
     }
 
     [Test]
-    public async Task KeepsRuntimeSecretsOutOfControllerConfiguration() {
+    public async Task KeepsRequestCredentialsOutOfControllerConfiguration() {
         string configuration = (await DockerCheckedAsync([
             "inspect", "--format", "{{json .Config.Env}}", container
         ])).standardOutput;
 
         Assert.Multiple(() => {
-            Assert.That(configuration, Does.Not.Contain("UNITY_CREDENTIALS_USR="));
-            Assert.That(configuration, Does.Not.Contain("UNITY_CREDENTIALS_PSW="));
-            Assert.That(configuration, Does.Not.Contain("EMAIL_CREDENTIALS_USR="));
-            Assert.That(configuration, Does.Not.Contain("EMAIL_CREDENTIALS_PSW="));
-            Assert.That(configuration, Does.Not.Contain("daemon-unity-user"));
-            Assert.That(configuration, Does.Not.Contain("daemon-unity-password"));
-            Assert.That(configuration, Does.Not.Contain("daemon-email-user"));
-            Assert.That(configuration, Does.Not.Contain("daemon-email-password"));
+            Assert.That(configuration, Does.Not.Contain("client-a-unity-user"));
+            Assert.That(configuration, Does.Not.Contain("client-a-unity-password"));
+            Assert.That(configuration, Does.Not.Contain("client-a-email-user"));
+            Assert.That(configuration, Does.Not.Contain("client-a-email-password"));
+            Assert.That(configuration, Does.Not.Contain("client-b-unity-user"));
+            Assert.That(configuration, Does.Not.Contain("client-b-unity-password"));
+            Assert.That(configuration, Does.Not.Contain("client-b-email-user"));
+            Assert.That(configuration, Does.Not.Contain("client-b-email-password"));
         });
     }
 
@@ -438,20 +436,34 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
         Assert.That(response["result"]!["serverInfo"]!["name"]!.GetValue<string>(), Is.EqualTo("unity"));
     }
 
-    async Task<JsonNode> CallToolAsync(string name, JsonObject arguments) =>
-        await InvokeMcpAsync("tools/call", new JsonObject { ["name"] = name, ["arguments"] = arguments });
+    async Task<JsonNode> CallToolAsync(
+        string name,
+        JsonObject arguments,
+        IReadOnlyDictionary<string, string>? headers = null) =>
+        await InvokeMcpAsync("tools/call", new JsonObject { ["name"] = name, ["arguments"] = arguments }, headers);
 
-    async Task<JsonNode> InvokeMcpAsync(string method, JsonObject parameters) {
-        var events = await InvokeMcpEventsAsync(method, parameters);
+    async Task<JsonNode> InvokeMcpAsync(
+        string method,
+        JsonObject parameters,
+        IReadOnlyDictionary<string, string>? headers = null) {
+        var events = await InvokeMcpEventsAsync(method, parameters, headers);
         Assert.That(events, Has.Count.EqualTo(1), $"Unexpected MCP events: {JsonSerializer.Serialize(events)}");
         return events[0];
     }
 
-    async Task<List<JsonNode>> InvokeMcpEventsAsync(string method, JsonObject parameters) {
+    async Task<List<JsonNode>> InvokeMcpEventsAsync(
+        string method,
+        JsonObject parameters,
+        IReadOnlyDictionary<string, string>? headers = null) {
         var body = new JsonObject { ["jsonrpc"] = "2.0", ["id"] = Interlocked.Increment(ref requestId), ["method"] = method, ["params"] = parameters };
         using var content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
         request.Content = content;
+        if (headers is not null) {
+            foreach (var header in headers) {
+                Assert.That(request.Headers.TryAddWithoutValidation(header.Key, header.Value), Is.True);
+            }
+        }
         using var response = await httpClient!.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync();
@@ -471,6 +483,14 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
         var response = await CallToolAsync("execute_method", new JsonObject { ["projectRoot"] = projectRoot ?? project, ["method"] = method, ["arguments"] = new JsonArray() });
         Assert.That(response["result"]!["isError"]?.GetValue<bool>(), Is.Not.True, response.ToJsonString());
     }
+
+    static IReadOnlyDictionary<string, string> CredentialHeaders(string client) =>
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+            ["X-Unity-Credentials-Usr"] = $"{client}-unity-user",
+            ["X-Unity-Credentials-Psw"] = $"{client}-unity-password",
+            ["X-Email-Credentials-Usr"] = $"{client}-email-user",
+            ["X-Email-Credentials-Psw"] = $"{client}-email-password"
+        };
 
     async Task<string> SingleWorkerAsync() {
         var result = await DockerCheckedAsync([

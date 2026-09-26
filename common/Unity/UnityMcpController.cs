@@ -68,7 +68,7 @@ sealed class UnityMcpController : IAsyncDisposable {
     readonly ConcurrentDictionary<string, Lazy<Task<ValidatedProject>>> projects = new(StringComparer.Ordinal);
     readonly JsonObject self;
     readonly CancellationToken stoppingToken;
-    readonly RuntimeCredentialStore credentials;
+    readonly RuntimeCredentials fallbackCredentials;
     readonly bool windowsContainers;
     int preferredWindowsHostPathStrategy;
 
@@ -78,7 +78,7 @@ sealed class UnityMcpController : IAsyncDisposable {
         string controllerId,
         string imageId,
         bool windowsContainers,
-        RuntimeCredentialStore credentials,
+        RuntimeCredentials fallbackCredentials,
         CancellationToken stoppingToken) {
         this.docker = docker;
         this.self = self;
@@ -86,7 +86,7 @@ sealed class UnityMcpController : IAsyncDisposable {
         this.imageId = imageId;
         imageHash = Hash(imageId)[..12];
         this.windowsContainers = windowsContainers;
-        this.credentials = credentials;
+        this.fallbackCredentials = fallbackCredentials;
         this.stoppingToken = stoppingToken;
     }
 
@@ -155,7 +155,7 @@ sealed class UnityMcpController : IAsyncDisposable {
                 controllerId,
                 imageId,
                 windowsContainers,
-                new RuntimeCredentialStore(credentials),
+                credentials,
                 stoppingToken);
         } catch {
             await docker.DisposeAsync();
@@ -163,12 +163,8 @@ sealed class UnityMcpController : IAsyncDisposable {
         }
     }
 
-    internal object ConfigureCredentials(
-        string unityUsername,
-        string unityPassword,
-        string? emailUsername,
-        string? emailPassword) =>
-        credentials.Configure(unityUsername, unityPassword, emailUsername, emailPassword);
+    internal RuntimeCredentials RequestCredentials(Func<string, string?> readHeader) =>
+        fallbackCredentials.WithRequestHeaders(readHeader);
 
     internal async Task<object> ProjectInfoAsync(string projectRoot, CancellationToken cancellationToken) {
         var started = DateTimeOffset.UtcNow;
@@ -194,6 +190,7 @@ sealed class UnityMcpController : IAsyncDisposable {
     internal async Task<object> RunTestsAsync(
         string projectRoot,
         string[] modes,
+        RuntimeCredentials credentials,
         IProgress<ProgressNotificationValue> progress,
         CancellationToken cancellationToken) {
         if (modes is null || modes.Length == 0 || modes.Any(string.IsNullOrWhiteSpace)) {
@@ -218,7 +215,7 @@ sealed class UnityMcpController : IAsyncDisposable {
                 workerProjectRoot
             };
             command.AddRange(modes);
-            var result = await ExecuteWorkerAsync(worker, command, token);
+            var result = await ExecuteWorkerAsync(worker, command, credentials, token);
             operationProgress.ReportPhase("Parsing Unity test result");
             return BuildTestResult(result);
         }, linked.Token);
@@ -228,6 +225,7 @@ sealed class UnityMcpController : IAsyncDisposable {
         string projectRoot,
         string method,
         string[]? arguments,
+        RuntimeCredentials credentials,
         IProgress<ProgressNotificationValue> progress,
         CancellationToken cancellationToken) {
         if (string.IsNullOrWhiteSpace(method) || method.Length > 512 || method.Any(char.IsControl)) {
@@ -253,7 +251,7 @@ sealed class UnityMcpController : IAsyncDisposable {
                 "--"
             };
             command.AddRange(arguments);
-            var result = await ExecuteWorkerAsync(worker, command, token);
+            var result = await ExecuteWorkerAsync(worker, command, credentials, token);
             operationProgress.ReportPhase("Preparing method result");
             return new { exitStatus = result.exitCode, output = RelevantOutput(result.standardOutput), errorOutput = RelevantOutput(result.standardError) };
         }, linked.Token);
@@ -263,6 +261,7 @@ sealed class UnityMcpController : IAsyncDisposable {
         string projectRoot,
         string scheme,
         string host,
+        RuntimeCredentials credentials,
         IProgress<ProgressNotificationValue> progress,
         CancellationToken cancellationToken) {
         if (scheme is not "http" and not "https" || string.IsNullOrWhiteSpace(host)) {
@@ -280,7 +279,7 @@ sealed class UnityMcpController : IAsyncDisposable {
                 "module-install",
                 workerProjectRoot,
                 "webgl"
-            ], token);
+            ], credentials, token);
             EnsureSuccessful(moduleResult, "Unity WebGL Build Support installation");
 
             string workerOutput = CombineContainerPath(workerWebGlRoot, Guid.NewGuid().ToString("N"), windowsContainers);
@@ -295,7 +294,7 @@ sealed class UnityMcpController : IAsyncDisposable {
                     "-buildTarget",
                     "WebGL",
                     workerOutput
-                ], token);
+                ], credentials, token);
                 EnsureSuccessful(buildResult, "Unity WebGL build");
 
                 operationProgress.ReportPhase("Publishing WebGL build - step 3 of 3");
@@ -350,6 +349,7 @@ sealed class UnityMcpController : IAsyncDisposable {
     async Task<ExecResult> ExecuteWorkerAsync(
         WorkerContainer worker,
         IReadOnlyList<string> command,
+        RuntimeCredentials credentials,
         CancellationToken cancellationToken) {
         activeWorkers.TryAdd(worker.id, 0);
         try {
@@ -357,7 +357,7 @@ sealed class UnityMcpController : IAsyncDisposable {
                 worker.id,
                 workerProjectRoot,
                 command,
-                credentials.Snapshot().WorkerEnvironment(),
+                credentials.WorkerEnvironment(),
                 cancellationToken);
         } catch (OperationCanceledException) {
             await docker.StopContainerAsync(worker.id, workerStopTimeout, CancellationToken.None);
