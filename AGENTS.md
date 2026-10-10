@@ -12,7 +12,11 @@ Always select Docker daemons explicitly: use `--context linux` or `--context win
 
 Build, tag, overwrite, or remove only images in the disposable `tmp/` namespace. Treat images in every other namespace as published artifacts.
 
-### Entry points and implementation
+### Command entry points
+
+Add project `bin` directories to `PATH`, preserving existing entries. Use shims as shorthands for explicit subcommands: ShimGen executables on Windows and executable shell wrappers with `exec` on Linux. Support direct `docker exec` invocation.
+
+### Implementation
 
 Keep Dockerfile comments focused on non-obvious constraints and reasons. Preserve each file's shell conventions: PowerShell in Windows Dockerfiles, POSIX shell in Linux Dockerfiles, and batch in `.bat` files.
 
