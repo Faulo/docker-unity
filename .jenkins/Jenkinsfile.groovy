@@ -17,7 +17,11 @@ pipeline {
             }
             steps {
                 exec 'dotnet test --logger junit'
-                junit(testResults: '**/TestResults.xml', allowEmptyResults: true)
+            }
+            post {
+                always {
+                    junit(testResults: '**/TestResults.xml', allowEmptyResults: false)
+                }
             }
         }
         stage('Integration Tests') {
