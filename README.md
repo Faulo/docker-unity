@@ -87,14 +87,14 @@ Linux declares Unity editor, configuration, cache, and license locations below `
 Build and test the solution:
 
 ```console
-dotnet test docker-unity.sln --configuration Release
+dotnet test docker-unity.sln --configuration Release --logger junit
 ```
 
 Run daemon tests explicitly against the named local Docker contexts:
 
 ```console
 $env:UNITY_DAEMON_TEST_REQUIRED_OS = 'linux'
-dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --configuration Release
+dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --configuration Release --logger junit
 ```
 
 Candidate images must use the disposable namespace:
@@ -108,3 +108,9 @@ docker --context dende image tag tmp/unity:latest tmp/unity:latest-windows-ltsc2
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context dende
 ```
+
+Jenkins runs `dotnet test --logger junit` in the .NET 9 SDK container on a
+Linux agent and publishes `**/TestResults.xml` with its native `junit` step.
+Each test project writes its report to `TestResults/TestResults.xml`.
+Image integration tests continue to use the targets and variants configured
+in `.jenkins/pesterProject.properties`.

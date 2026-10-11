@@ -8,6 +8,18 @@ pipeline {
     }
 
     stages {
+        stage('Unit Tests') {
+            agent {
+                docker {
+                    image 'mcr.microsoft.com/dotnet/sdk:9.0'
+                    label 'docker && linux'
+                }
+            }
+            steps {
+                exec 'dotnet test --logger junit'
+                junit(testResults: '**/TestResults.xml', allowEmptyResults: true)
+            }
+        }
         stage('Integration Tests') {
             steps {
                 script {
