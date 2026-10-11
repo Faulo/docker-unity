@@ -44,6 +44,17 @@ function Get-DockerCommandResult {
     }
 }
 
+function ConvertTo-DockerErrorText {
+    param(
+        [AllowEmptyString()]
+        [string] $Value
+    )
+
+    $escape = [regex]::Escape([string] [char] 0x1b)
+    return ($Value -replace "$escape\[[0-?]*[ -/]*[@-~]", '') `
+        -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', ''
+}
+
 function Invoke-Docker {
     param(
         [Parameter(Mandatory)]
@@ -57,7 +68,8 @@ function Invoke-Docker {
 
     $result = Get-DockerCommandResult -Context $Context -Arguments $Arguments -RunArguments $RunArguments
     if ($result.ExitCode -ne 0) {
-        throw "Docker command failed with exit code $($result.ExitCode): docker $($result.Arguments -join ' ')`n$($result.Output | Out-String)"
+        $output = ConvertTo-DockerErrorText -Value ($result.Output | Out-String)
+        throw "Docker command failed with exit code $($result.ExitCode): docker $($result.Arguments -join ' ')`n$output"
     }
 }
 
@@ -74,7 +86,8 @@ function Invoke-DockerOutput {
 
     $result = Get-DockerCommandResult -Context $Context -Arguments $Arguments -RunArguments $RunArguments
     if ($result.ExitCode -ne 0) {
-        throw "Docker command failed with exit code $($result.ExitCode): docker $($result.Arguments -join ' ')`n$($result.Output | Out-String)"
+        $output = ConvertTo-DockerErrorText -Value ($result.Output | Out-String)
+        throw "Docker command failed with exit code $($result.ExitCode): docker $($result.Arguments -join ' ')`n$output"
     }
 
     return ($result.Output | Out-String).Trim()

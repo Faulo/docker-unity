@@ -94,7 +94,6 @@ $testData = @{
     Variant = $Variant
     Image = $Image
     Os = $os
-    Pull = [bool] $Pull
     DockerRunArguments = $dockerRunArguments
 }
 
