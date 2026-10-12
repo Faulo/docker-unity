@@ -1,0 +1,11 @@
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>faulo-unity-build</id>
+    <version>1.0.0</version>
+    <authors>Daniel Schulz</authors>
+    <description>Temporary Unity image preparation tools</description>
+    <dependencies>
+      <dependency id="7zip.portable" />
+    </dependencies>
+  </metadata>
+</package>

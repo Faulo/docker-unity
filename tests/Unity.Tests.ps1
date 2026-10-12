@@ -172,6 +172,22 @@ Describe "Docker image command contract [$Os, $Image]" {
 }
 
 Describe "Unity image identity and contents [$Os, $Image]" {
+    It 'compiles and runs a .NET SDK application' {
+        $command = if ($Os -eq 'windows') {
+            @(
+                'pwsh', '-NoLogo', '-NoProfile', '-Command',
+                '$ErrorActionPreference = "Stop"; $project = Join-Path $env:TEMP "unity-sdk-smoke"; dotnet new console --output $project; if ($LASTEXITCODE -ne 0) { throw "SDK project creation failed" }; dotnet run --project $project --configuration Release; if ($LASTEXITCODE -ne 0) { throw "SDK build/run failed" }'
+            )
+        } else {
+            @('sh', '-c', 'set -eu; dotnet new console --output /tmp/unity-sdk-smoke; dotnet run --project /tmp/unity-sdk-smoke --configuration Release')
+        }
+        $result = Get-DockerCommandResult -Context $Context -RunArguments $DockerRunArguments -Arguments (@(
+            'run', '--rm', $Image
+        ) + $command)
+        $result.ExitCode | Should -Be 0 -Because ($result.Output | Out-String)
+        ($result.Output | Out-String) | Should -Match 'Hello, World!'
+    }
+
     It 'provides PHP 8.4' {
         $result = Get-DockerCommandResult -Context $Context -RunArguments $DockerRunArguments -Arguments @(
             'run', '--rm', $Image,

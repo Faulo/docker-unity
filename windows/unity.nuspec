@@ -13,12 +13,10 @@
       <dependency id="python3" />
       <dependency id="ffmpeg" />
       <dependency id="blender" />
-      <dependency id="vcredist2010" />
-      <dependency id="vcredist2013" />
-      <dependency id="vcredist140" />
       <dependency id="php" version="[8.4,8.5)" />
       <dependency id="composer" />
       <dependency id="dotnet-9.0-sdk" />
+      <dependency id="netfx-4.7.1-devpack" />
       <dependency id="powershell-core" />
     </dependencies>
   </metadata>

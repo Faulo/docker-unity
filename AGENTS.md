@@ -22,6 +22,8 @@ Keep Dockerfile comments focused on non-obvious constraints and reasons. Preserv
 
 Prefer rolling updates of dependencies over pinned and checksummed versions. Preserve native exit-code checks, and explicit error handling.
 
+Windows inherits Chocolatey, Visual C++ prerequisites, and shared installer compatibility fixes from `faulo/choco:windows-${OS_BASE}`. Install nuspec dependencies through `choco-install`. Report ordinary package installer stalls or failures to `Faulo/docker-choco` with the package/version, base digest, Windows build/isolation, exact command, logs, and a fresh-container reproduction; keep the migration blocked until the shared fix is validated. Do not add downstream installer bypasses or duplicate compatibility patches.
+
 Use the Idea MCP to inspect source files for warnings and optimizations. Lint the code.
 
 Use the patterns in `C:\Webserver\dockerfile-templates` when applicable.

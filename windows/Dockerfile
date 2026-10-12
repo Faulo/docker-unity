@@ -7,9 +7,10 @@ ENV NUGET_PACKAGES=C:/nuget/packages
 
 COPY . .
 
+# hadolint shell=powershell
 RUN dotnet publish --runtime win-x64
 
-FROM mcr.microsoft.com/windows:${OS_BASE}
+FROM faulo/choco:windows-${OS_BASE}
 
 ARG OS_BASE
 
@@ -17,21 +18,16 @@ SHELL ["C:/Windows/System32/WindowsPowerShell/v1.0/powershell", "-ExecutionPolic
 
 WORKDIR C:/unity
 
-# The selectable full Windows base supplies the desktop WinRT classes required
-# by Unity. Shell compatibility artifacts below are validated per OS family.
+# Unity requires the full Windows API surface supplied by this image family.
 ENV COMPLUS_RUNNING_IN_CONTAINER=1
 ENV COMPLUS_NGenProtectedProcess_FeatureEnabled=0
+# hadolint shell=powershell
 RUN $policyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'; \
     Set-ItemProperty -LiteralPath $policyKey -Name ConsentPromptBehaviorAdmin -Value 0; \
     Set-ItemProperty -LiteralPath $policyKey -Name PromptOnSecureDesktop -Value 0
 
-# Chocolatey 1.4 supports the .NET Framework available in LTSC 2019.
-ARG CHOCOLATEY_VERSION=1.4.0
-RUN $env:chocolateyVersion = $env:CHOCOLATEY_VERSION; \
-    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1')); \
-    if (-not (Get-Command choco -ErrorAction SilentlyContinue)) { throw 'Chocolatey installation failed' }
-
 # Keep the full desktop API surface visible as an explicit image invariant.
+# hadolint shell=powershell
 RUN foreach ($dll in 'ddraw.dll', 'dsound.dll', 'glu32.dll', 'opengl32.dll', 'avicap32.dll', 'msvfw32.dll') { \
         $path = Join-Path $env:WINDIR ('System32\' + $dll); \
         if (-not (Test-Path -LiteralPath $path)) { throw ('Desktop runtime DLL not found: ' + $path) } \
@@ -49,6 +45,8 @@ ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
 ENV DOTNET_CLI_UI_LANGUAGE=en
 ARG BLENDER_SERIES=4.5
 COPY windows/unity.nuspec unity.nuspec
+COPY windows/unity-build.nuspec unity-build.nuspec
+# hadolint shell=powershell
 RUN if ($env:DOTNET_VERSION -notmatch '^\d+\.\d+$') { throw "Invalid .NET SDK feature version: $env:DOTNET_VERSION" }; \
     $seriesMatch = [regex]::Match($env:BLENDER_SERIES, '^(?<major>\d+)\.(?<minor>\d+)$'); \
     if (-not $seriesMatch.Success) { throw "Invalid Blender series: $env:BLENDER_SERIES" }; \
@@ -61,71 +59,51 @@ RUN if ($env:DOTNET_VERSION -notmatch '^\d+\.\d+$') { throw "Invalid .NET SDK fe
     if ($blenderDependencies.Count -ne 1) { throw "Expected one Blender dependency, found $($blenderDependencies.Count)" }; \
     $blenderDependencies[0].SetAttribute('version', '[' + $env:BLENDER_SERIES + ',' + $nextSeries + ')'); \
     $packageSpec.Save((Resolve-Path -LiteralPath unity.nuspec)); \
-    choco pack unity.nuspec; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to pack unity' }; \
-    $dependencyInstallSucceeded = $false; \
-    for ($attempt = 1; $attempt -le 5; $attempt++) { \
-        choco install faulo-unity --no-progress --yes --ignore-checksums --execution-timeout=7200 --source 'C:\unity;https://community.chocolatey.org/api/v2/'; \
-        if ($LASTEXITCODE -eq 0) { \
-            $dependencyInstallSucceeded = $true; \
-            break \
-        }; \
-        Write-Warning ('Chocolatey dependency installation attempt ' + $attempt + ' failed'); \
-        if ($attempt -lt 5) { Start-Sleep -Seconds (30 * $attempt) } \
-    }; \
-    if (-not $dependencyInstallSucceeded) { throw 'Failed to install unity dependencies after 5 attempts' }; \
+    choco-install C:\unity\unity.nuspec C:\unity\unity-build.nuspec; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to install unity dependencies' }; \
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine'); \
-    $env:PATH = $machinePath; \
+    $env:PATH = $machinePath + ';' + $env:PATH; \
     $installedSdkVersion = dotnet --version; \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to query the installed .NET SDK' }; \
     if ($installedSdkVersion -notmatch ('^' + [regex]::Escape($env:DOTNET_VERSION) + '\.')) { throw "Unexpected .NET SDK version: $installedSdkVersion" }; \
     $dotnetToolsDirectory = Join-Path $env:USERPROFILE '.dotnet\tools'; \
     [Environment]::SetEnvironmentVariable('Path', $dotnetToolsDirectory + ';' + $machinePath, 'Machine'); \
-    Remove-Item -Force *.nuspec; \
-    Remove-Item -Force *.nupkg; \
-    choco install 7zip.portable --no-progress --yes --execution-timeout=7200; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to install the temporary archive tool' }
+    Remove-Item -LiteralPath C:\unity\unity.nuspec, C:\unity\unity-build.nuspec -Force
+
+# A real compilation and execution verifies the SDK beyond package records.
+# hadolint shell=powershell
+RUN dotnet new console --output C:\unity\sdk-smoke --framework ('net' + $env:DOTNET_VERSION); \
+    if ($LASTEXITCODE -ne 0) { throw '.NET SDK project creation failed' }; \
+    dotnet build C:\unity\sdk-smoke --configuration Release; \
+    if ($LASTEXITCODE -ne 0) { throw '.NET SDK compilation failed' }; \
+    dotnet run --project C:\unity\sdk-smoke --configuration Release --no-build; \
+    if ($LASTEXITCODE -ne 0) { throw '.NET SDK execution failed' }; \
+    Remove-Item -LiteralPath C:\unity\sdk-smoke -Recurse -Force
 
 # DocFX
+# hadolint shell=powershell
 RUN dotnet tool update --global docfx; \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to install DocFX' }; \
     docfx --version; \
     if ($LASTEXITCODE -ne 0) { throw 'DocFX smoke check failed' }
 
-# Unity-generated projects can target .NET Framework 4.7.1 even when a newer
-# runtime is installed. The Developer Pack installer hangs under Hyper-V
-# isolation, so install Microsoft's reference-assemblies package for MSBuild.
-RUN $package = 'C:\net471-reference-assemblies.nupkg'; \
-    $extractRoot = 'C:\net471-reference-assemblies'; \
-    $packageUri = 'https://api.nuget.org/v3-flatcontainer/microsoft.netframework.referenceassemblies.net471/1.0.3/microsoft.netframework.referenceassemblies.net471.1.0.3.nupkg'; \
-    Invoke-WebRequest -Uri $packageUri -OutFile $package; \
-    $actualHash = (Get-FileHash -Algorithm SHA256 $package).Hash; \
-    if ($actualHash -ne '2D1662724B3794992640C59BFCEB2F010E62A3BDB581A626D1B6D7BD5149D575') { \
-        throw ".NET Framework 4.7.1 reference assemblies checksum mismatch: $actualHash" \
-    }; \
-    $sevenZip = 'C:\ProgramData\chocolatey\lib\7zip.portable\tools\7z.exe'; \
-    $extractArgument = '-o' + $extractRoot; \
-    & $sevenZip x $package $extractArgument -y | Out-Null; \
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to extract .NET Framework 4.7.1 reference assemblies' }; \
-    $packageAssemblies = Join-Path $extractRoot 'build\.NETFramework\v4.7.1'; \
-    $referenceDirectory = 'C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.1'; \
-    New-Item -ItemType Directory -Path $referenceDirectory -Force | Out-Null; \
-    Copy-Item -Path (Join-Path $packageAssemblies '*') -Destination $referenceDirectory -Recurse -Force; \
-    $referenceAssembly = 'C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.1\mscorlib.dll'; \
-    if (-not (Test-Path -LiteralPath $referenceAssembly)) { \
-        throw '.NET Framework 4.7.1 reference assemblies were not installed' \
-    }; \
-    Remove-Item -LiteralPath $package, $extractRoot -Recurse -Force
+# Unity-generated projects can target .NET Framework 4.7.1. Its Developer Pack
+# is a normal Chocolatey dependency rather than copied reference assemblies.
+# hadolint shell=powershell
+RUN $referenceAssembly = 'C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.1\mscorlib.dll'; \
+    if (-not (Test-Path -LiteralPath $referenceAssembly)) { throw '.NET Framework 4.7.1 Developer Pack is unavailable' }
 
 # Use the supported Visual Studio 2019 servicing baseline because Visual Studio
 # 2022 MSBuild is incompatible with the .NET Framework build host used here.
 COPY windows/WindowsBase C:/unity/WindowsBase
+# hadolint shell=powershell
 RUN & 'C:\unity\WindowsBase\install.ps1'; \
     Remove-Item -LiteralPath C:\unity\WindowsBase -Recurse -Force
 
 # Unity publishes the 3.12.1 installer under its 3.12.0 archive path. Its NSIS
 # process can hang in a container, so fall back to its verified app archive.
 ENV UNITY_HUB_VERSION=3.12.1
+# hadolint shell=powershell
 RUN $installer = 'C:\UnityHubSetup.exe'; \
     $hubDirectory = 'C:\Program Files\Unity Hub'; \
     $hubExecutable = Join-Path $hubDirectory 'Unity Hub.exe'; \
@@ -172,12 +150,16 @@ RUN $installer = 'C:\UnityHubSetup.exe'; \
 # Resume large Editor downloads after temporary CDN stalls and launch the
 # installer helper directly because Windows containers cannot display UAC.
 COPY windows/patch-unity-hub.ps1 C:/unity/patch-unity-hub.ps1
+# hadolint shell=powershell
 RUN & C:\unity\patch-unity-hub.ps1; \
     Remove-Item -Force C:\unity\patch-unity-hub.ps1; \
+    choco uninstall faulo-unity-build --no-progress --yes; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to remove the temporary build-tool package' }; \
     choco uninstall 7zip.portable --no-progress --yes; \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to remove the temporary archive tool' }
 
 COPY windows/php-extensions.ini C:/tools/php84/unity-extensions.ini
+# hadolint shell=powershell
 RUN $imapVersion = (Invoke-WebRequest -UseBasicParsing 'https://pecl.php.net/rest/r/imap/latest.txt').Content.Trim(); \
     $imapArchive = 'C:\php-imap.zip'; \
     $imapRoot = 'C:\php-imap'; \
@@ -191,6 +173,7 @@ RUN $imapVersion = (Invoke-WebRequest -UseBasicParsing 'https://pecl.php.net/res
     if ($modules -notcontains 'imap') { throw 'PHP IMAP extension is unavailable' }; \
     if ($modules -notcontains 'xsl') { throw 'PHP XSL extension is unavailable' }
 
+# hadolint shell=powershell
 RUN $blenderDirectory = 'C:\Program Files\Blender Foundation\Blender ' + $env:BLENDER_SERIES; \
     $blenderExecutable = Join-Path $blenderDirectory 'blender.exe'; \
     if (-not (Test-Path -LiteralPath $blenderExecutable)) { throw "Blender executable not found: $blenderExecutable" }; \
@@ -215,22 +198,8 @@ RUN $blenderDirectory = 'C:\Program Files\Blender Foundation\Blender ' + $env:BL
     $registeredCommand = (Get-Item $openCommandKey).GetValue(''); \
     if ($registeredCommand -ne $openCommand) { throw "Unexpected Blender open command: $registeredCommand" }
 
-# Windows containers expose SHELL32 but its desktop-shell implementation cannot
-# reliably resolve associations on mounted paths or launch executables without
-# Explorer. Preserve every original export through a proxy and replace only
-# FindExecutableW and ShellExecuteExW with container-safe implementations.
-COPY windows/Shell32Proxy C:/unity/Shell32Proxy
-RUN & 'C:\unity\Shell32Proxy\install.ps1'
-
-# Run both architectures in a fresh layer so KnownDLL resolution loads the
-# proxies rather than the original DLLs mapped by the replacement layer.
-RUN & 'C:\unity\Shell32Proxy\shell32-proxy-test-x64.exe'; \
-    if ($LASTEXITCODE -ne 0) { throw ('64-bit SHELL32 proxy test failed with exit code {0}' -f $LASTEXITCODE) }; \
-    & 'C:\unity\Shell32Proxy\shell32-proxy-test-x86.exe'; \
-    if ($LASTEXITCODE -ne 0) { throw ('32-bit SHELL32 proxy test failed with exit code {0}' -f $LASTEXITCODE) }; \
-    Remove-Item -LiteralPath C:\unity\Shell32Proxy -Recurse -Force
-
 # Test
+# hadolint shell=powershell
 RUN git config --global --add safe.directory *; \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to configure Git safe directories' }; \
     curl.exe --version; \
@@ -265,6 +234,8 @@ ENV UNITY_NO_GRAPHICS="1"
 # documented CLI syntax externally and translate it before launching Hub.
 COPY --from=build C:/solution/windows/UnityHub/bin/Release/net9.0/win-x64/publish/unity-hub-launcher.exe C:/unity/publish/unity-hub-launcher.exe
 COPY --from=build C:/solution/common/Unity/bin/Release/net9.0/win-x64/publish/unity.exe C:/unity/publish/unity.exe
+# hadolint shell=powershell
+# hadolint ignore=DL4006
 RUN $hubArtifact = 'C:\unity\publish\unity-hub-launcher.exe'; \
     $unityArtifact = 'C:\unity\publish\unity.exe'; \
     $hub = 'C:\Program Files\Unity Hub\Unity Hub.exe'; \
@@ -278,6 +249,7 @@ ENV UNITY_CALL_TIMEOUT=86400
 ENV UNITY_MCP=0
 
 ARG UNITY_TIMEOUT="14400"
+# hadolint shell=powershell
 RUN composer require ('slothsoft/unity'); \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to require slothsoft/unity' }; \
     composer config process-timeout $env:UNITY_TIMEOUT; \
@@ -286,6 +258,7 @@ RUN composer require ('slothsoft/unity'); \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to update Unity dependencies' }
 
 # Test
+# hadolint shell=powershell
 RUN unity --help; \
     if ($LASTEXITCODE -ne 0) { throw 'Unity command smoke check failed' }; \
     pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion'; \
