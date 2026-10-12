@@ -11,8 +11,8 @@ using System.Text.RegularExpressions;
 namespace Unity.DaemonTests;
 
 [NUnit.Framework.Category("DockerDaemon")]
-[TestFixture("linux", "linux")]
-[TestFixture("windows", "windows")]
+[TestFixture("linux", "linux", Category = "DockerLinux")]
+[TestFixture("windows", "windows", Category = "DockerWindows")]
 [CancelAfter(10 * 60 * 1000)]
 public sealed partial class DockerDaemonTests(string expectedOs, string dockerContext) {
     [OneTimeSetUp]
@@ -25,12 +25,20 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
         }
 
         repository = FindRepository();
-        project = Path.Combine(repository, "common", "Unity.Tests", "test-files", "ValidProject");
+        project = Environment.GetEnvironmentVariable("UNITY_DAEMON_TEST_PROJECT_ROOT")
+                  ?? Path.Combine(repository, "common", "Unity.Tests", "test-files", "ValidProject");
+        if (expectedOs == "windows") {
+            windowsIsolation = Environment.GetEnvironmentVariable("UNITY_DAEMON_TEST_ISOLATION");
+            Assert.That(windowsIsolation, Is.Null.Or.EqualTo("process").Or.EqualTo("hyperv"),
+                "UNITY_DAEMON_TEST_ISOLATION must be 'process', 'hyperv', or unset.");
+        }
         staging = Path.Combine(Path.GetTempPath(), $"unity-daemon-tests-{id}");
         image = $"tmp/unity-daemon-tests:{id}";
         container = $"tmp-unity-daemon-{id}";
 
-        var inspection = await RunAsync("docker", ["context", "inspect", dockerContext, "--format", "{{.Endpoints.docker.Host}}"], TimeSpan.FromSeconds(5));
+        // Cold Windows CLI startup can exceed five seconds on a busy build host.
+        var daemonProbeTimeout = TimeSpan.FromSeconds(30);
+        var inspection = await RunAsync("docker", ["context", "inspect", dockerContext, "--format", "{{.Endpoints.docker.Host}}"], daemonProbeTimeout);
         if (inspection.exitCode != 0) {
             IgnoreOrFail($"Docker context '{dockerContext}' is unavailable: {Detail(inspection)}");
         }
@@ -40,7 +48,7 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
             IgnoreOrFail($"Docker context '{dockerContext}' is not local: {contextEndpoint}");
         }
 
-        var version = await RunDockerAsync(["version", "--format", "{{.Server.Os}}"], TimeSpan.FromSeconds(5));
+        var version = await RunDockerAsync(["version", "--format", "{{.Server.Os}}"], daemonProbeTimeout);
         if (version.exitCode != 0) {
             IgnoreOrFail($"Docker context '{dockerContext}' is offline: {Detail(version)}");
         }
@@ -117,6 +125,7 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
     int requestId;
     bool imageBuilt;
     bool controllerStarted;
+    string? windowsIsolation;
 
     [Test]
     public async Task AdvertisesToolsAndReportsProjectInformation() {
@@ -509,8 +518,12 @@ public sealed partial class DockerDaemonTests(string expectedOs, string dockerCo
         return result;
     }
 
-    Task<ProcessResult> RunDockerAsync(IReadOnlyList<string> arguments, TimeSpan timeout) =>
-        RunAsync("docker", ["--context", dockerContext, .. arguments], timeout);
+    Task<ProcessResult> RunDockerAsync(IReadOnlyList<string> arguments, TimeSpan timeout) {
+        string[] isolationArguments = windowsIsolation is not null && arguments[0] is "build" or "run"
+            ? ["--isolation", windowsIsolation]
+            : [];
+        return RunAsync("docker", ["--context", dockerContext, arguments[0], .. isolationArguments, .. arguments.Skip(1)], timeout);
+    }
 
     async Task<string> ControllerLogsAsync() {
         var result = await RunDockerAsync(["logs", container], TimeSpan.FromSeconds(30));

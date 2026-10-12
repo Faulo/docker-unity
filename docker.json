@@ -1,0 +1,26 @@
+{
+    "schemaVersion": 2,
+    "namespace": "$DOCKER_NAMESPACE",
+    "image": "$DOCKER_IMAGE",
+    "context": ".",
+    "targets": [
+        {
+            "tag": "linux-amd64",
+            "dockerfile": "linux/Dockerfile",
+            "runner": "ubuntu-latest"
+        },
+        {
+            "tag": "windows-ltsc2019",
+            "dockerfile": "windows/Dockerfile",
+            "runner": "windows-latest",
+            "buildArgs": {
+                "OS_BASE": "ltsc2019"
+            }
+        }
+    ],
+    "variants": [
+        {
+            "tag": "latest"
+        }
+    ]
+}

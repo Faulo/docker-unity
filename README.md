@@ -11,11 +11,18 @@ Node.js, npm, Butler, and SteamCMD are intentionally not included.
 ## Image variants
 
 - `faulo/unity:latest` is the primary multi-platform image.
-- `faulo/unity:latest-linux` targets the complete Linux platform set.
-- `faulo/unity:latest-windows` targets every published Windows base variant.
+- `faulo/unity:latest-linux-amd64` targets Linux amd64.
 - `faulo/unity:latest-windows-ltsc2019` targets Windows Server 2019 specifically.
 
-The `latest-*` tags are compatibility aliases for clients that need to avoid resolving unrelated platforms from the primary manifest. Integration tests normally target `latest`. Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
+The target-specific tags contain only the selected target and its attestations. Integration tests cover `latest` and the matching target-specific tag on each host. Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
+
+The former `latest-linux` and `latest-windows` tags are no longer maintained. Use `latest-linux-amd64` and `latest-windows-ltsc2019` instead. Intermediate platform/family tags are requested in [workflows-docker #2](https://github.com/Faulo/workflows-docker/issues/2); historical tags are not deleted by this migration.
+
+Windows derives from `faulo/choco:windows-${OS_BASE}` to retain Unity's full desktop API surface. The shared base supplies Chocolatey, Visual C++ prerequisites, and shell/installer compatibility fixes. The existing package dependencies install through `choco-install`, including the selected .NET SDK and Blender release line. Unity Hub/editor extraction and application-specific setup remain in this project.
+
+Windows installs the .NET Framework 4.7.1 Developer Pack through its normal Chocolatey dependency for Unity-generated projects. Temporary archive tooling is declared separately in [`windows/unity-build.nuspec`](windows/unity-build.nuspec); its package and 7-Zip are removed after Unity Hub preparation. The SDK is checked by compiling and running a real console application in a fresh build layer and in the image integration suite.
+
+Report ordinary Chocolatey installer stalls or failures to [Faulo/docker-choco](https://github.com/Faulo/docker-choco/issues) and link them from the downstream migration. Include the package ID/version, base tag/digest, host Windows build and isolation mode, exact command/nuspec, relevant complete logs, exit code or timeout, and a minimal fresh-container reproduction without credentials. Keep the affected migration blocked until the shared fix is available and validated; do not add downstream installer bypasses or compatibility patches.
 
 ## Build arguments
 
@@ -25,7 +32,6 @@ The `latest-*` tags are compatibility aliases for clients that need to avoid res
 | `DOTNET_VERSION` | `9.0` | Selects the runtime .NET SDK release line. |
 | `BLENDER_SERIES` | `4.5` | Selects the Blender release line. |
 | `OS_BASE` | `ltsc2019` | Selects the Windows base release. |
-| `CHOCOLATEY_VERSION` | `1.4.0` | Selects the Windows Chocolatey bootstrap version. |
 
 ## Commands
 
@@ -102,15 +108,20 @@ Candidate images must use the disposable namespace:
 ```console
 docker --context garl build --file linux/Dockerfile --tag tmp/unity:latest .
 docker --context dende build --file windows/Dockerfile --tag tmp/unity:latest .
-docker --context garl image tag tmp/unity:latest tmp/unity:latest-linux
-docker --context dende image tag tmp/unity:latest tmp/unity:latest-windows
+docker --context garl image tag tmp/unity:latest tmp/unity:latest-linux-amd64
 docker --context dende image tag tmp/unity:latest tmp/unity:latest-windows-ltsc2019
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context dende
+pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl -Variant latest-linux-amd64
+pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context dende -Variant latest-windows-ltsc2019
 ```
 
-Jenkins runs `dotnet test --logger junit` in the .NET 9 SDK container on a
-Linux agent and publishes `**/TestResults.xml` with its native `junit` step.
-Each test project writes its report to `TestResults/TestResults.xml`.
-Image integration tests continue to use the targets and variants configured
-in `.jenkins/pesterProject.properties`.
+GitHub uses the shared [workflows-docker v3 caller](https://github.com/Faulo/workflows-docker/blob/v3/examples/docker.yml) and [`docker.json`](docker.json) for native builds and publication. Namespace and image resolve from the same tracked `.env` used by Jenkins. Docker Hub credentials must allow publication and deletion of run-specific staging tags. GitHub verifies published digests/platform metadata and staging-tag cleanup; project tests run in Jenkins.
+
+Jenkins runs unit tests in the .NET 9 SDK container on a Linux agent and publishes each stage's reports with its native `junit` step.
+The unit project writes `common/Unity.Tests/TestResults/TestResults.xml`; daemon stages write fresh reports below `.reports/daemon-<os>/` and select only their OS fixture so Jenkins receives no duplicate opposite-OS skips.
+Separate Jenkins daemon stages run on Garl and Dende through [`.jenkins/Invoke-DaemonTests.ps1`](.jenkins/Invoke-DaemonTests.ps1). The script builds a disposable SDK runner with the Docker client, connects through the local `linux` or `windows` context, translates mounted agent workspaces to daemon-visible fixture paths, and requires coverage for the selected OS with `UNITY_DAEMON_TEST_REQUIRED_OS`. Linux uses host networking for the fixture's loopback port. Windows uses process isolation on LTSC 2019 hosts and Hyper-V on newer hosts, passed to fixture builds and controller containers without changing the daemon's global configuration.
+
+Run the same daemon runner locally with `pwsh ./.jenkins/Invoke-DaemonTests.ps1 -Context linux` or `-Context windows`. `-RepositoryHostPath` supplies an explicit checkout path visible to the daemon when automatic Jenkins mount detection is unavailable; `-WindowsIsolation` overrides the compatible Windows isolation selection.
+
+Image integration tests use the hosts and product variants configured in `.jenkins/pesterProject.properties`, plus each host's matching target-specific tag. Every invocation selects its Docker context explicitly.

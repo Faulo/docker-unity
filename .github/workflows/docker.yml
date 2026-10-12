@@ -1,123 +1,24 @@
 name: Docker
 
 on:
-    push:
-        branches:
-            - "main"
-        paths:
-            - "common/**"
-            - "linux/**"
-            - "windows/**"
-            - ".env"
-            - ".github/workflows/docker.yml"
-            - "Directory.Build.props"
-            - "global.json"
-    workflow_dispatch:
-    schedule:
-        - cron: "17 3 1 * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 1 * *"
 
 permissions:
-    contents: read
+  contents: read
 
 concurrency:
-    group: docker-publish
-    cancel-in-progress: false
+  group: docker-publish
+  cancel-in-progress: false
 
 jobs:
-    test-linux:
-        runs-on: ubuntu-24.04
-        timeout-minutes: 15
-        steps:
-            - name: Checkout
-              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Set up .NET
-              uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-              with:
-                  dotnet-version: 9.0.x
-            - name: Run unit tests
-              run: dotnet test common/Unity.Tests/Unity.Tests.csproj --nologo --configuration Release --blame-hang-timeout 2m
-            - name: Register Linux Docker context
-              run: docker context create linux --docker host=unix:///var/run/docker.sock
-            - name: Run real-daemon tests
-              run: dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --nologo --configuration Release
-              env:
-                  UNITY_DAEMON_TEST_REQUIRED_OS: linux
-
-    test-windows:
-        runs-on: windows-2022
-        timeout-minutes: 15
-        steps:
-            - name: Checkout
-              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Set up .NET
-              uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-              with:
-                  dotnet-version: 9.0.x
-            - name: Configure Hyper-V as Docker default isolation
-              shell: pwsh
-              run: |
-                  Stop-Service docker
-                  $configurationPath = Join-Path $env:ProgramData "docker\config\daemon.json"
-                  $configuration = Get-Content -LiteralPath $configurationPath -Raw | ConvertFrom-Json
-                  $configuration | Add-Member -MemberType NoteProperty -Name "exec-opts" `
-                      -Value @("isolation=hyperv") -Force
-                  $json = $configuration | ConvertTo-Json -Depth 10
-                  [IO.File]::WriteAllText(
-                      $configurationPath,
-                      $json,
-                      [Text.UTF8Encoding]::new($false))
-                  Start-Service docker
-                  for ($attempt = 1; $attempt -le 60; $attempt++) {
-                      $isolation = docker info --format "{{.Isolation}}" 2>$null
-                      if ($LASTEXITCODE -eq 0 -and $isolation.Trim() -eq "hyperv") {
-                          exit 0
-                      }
-                      Start-Sleep -Seconds 1
-                  }
-                  throw "Docker did not start with Hyper-V as its default isolation within 60 seconds."
-            - name: Register Windows Docker context
-              shell: pwsh
-              run: |
-                  docker context create windows --docker "host=npipe:////./pipe/docker_engine"
-                  if ($LASTEXITCODE -ne 0) {
-                      throw "Could not register the Windows Docker context."
-                  }
-                  $daemonOs = docker --context windows version --format "{{.Server.Os}}"
-                  if ($LASTEXITCODE -ne 0 -or $daemonOs.Trim() -ne "windows") {
-                      throw "The Windows Docker context is not connected to a Windows daemon: $daemonOs"
-                  }
-            - name: Run Windows real-daemon tests
-              run: dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --nologo --configuration Release
-              env:
-                  UNITY_DAEMON_TEST_REQUIRED_OS: windows
-
-    configuration:
-        needs:
-            - test-linux
-            - test-windows
-        runs-on: ubuntu-24.04
-        timeout-minutes: 5
-        outputs:
-            image: ${{steps.image.outputs.DOCKER_IMAGE}}
-        steps:
-            - name: Checkout
-              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-            - name: Read image name
-              id: image
-              shell: bash
-              run: grep -m1 '^DOCKER_IMAGE=' .env >> "${GITHUB_OUTPUT}"
-
-    publish:
-        needs: configuration
-        uses: Faulo/workflows-docker/.github/workflows/publish.yml@v1.2.0
-        with:
-            image: ${{needs.configuration.outputs.image}}
-            linux_context: .
-            windows_context: .
-            windows_variants: >-
-                [
-                  {"tag":"windows-ltsc2019","build_args":{"OS_BASE":"ltsc2019"}}
-                ]
-        secrets:
-            DOCKERHUB_USERNAME: ${{secrets.DOCKERHUB_USERNAME}}
-            DOCKERHUB_TOKEN: ${{secrets.DOCKERHUB_TOKEN}}
+  docker:
+    uses: Faulo/workflows-docker/.github/workflows/docker.yml@v3
+    with:
+      config: docker.json
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

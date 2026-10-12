@@ -1,0 +1,5 @@
+FROM mcr.microsoft.com/dotnet/sdk:9.0-nanoserver-1809
+USER ContainerAdministrator
+ENV NUGET_PACKAGES=C:/nuget/packages
+COPY docker.exe C:/Windows/docker.exe
+RUN docker --version
