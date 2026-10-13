@@ -12,7 +12,7 @@
         {
             "tag": "windows-ltsc2019",
             "dockerfile": "windows/Dockerfile",
-            "runner": "windows-latest",
+            "runner": "windows-2022",
             "buildArgs": {
                 "OS_BASE": "ltsc2019"
             }
