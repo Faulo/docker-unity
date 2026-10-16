@@ -1,26 +1,41 @@
 {
-    "schemaVersion": 2,
+    "schemaVersion": 3,
     "namespace": "$DOCKER_NAMESPACE",
     "image": "$DOCKER_IMAGE",
     "context": ".",
-    "targets": [
-        {
-            "tag": "linux-amd64",
-            "dockerfile": "linux/Dockerfile",
-            "runner": "ubuntu-latest"
+    "matrix": {
+        "product": {
+            "tags": {
+                "latest": {}
+            }
         },
-        {
-            "tag": "windows-ltsc2019",
-            "dockerfile": "windows/Dockerfile",
-            "runner": "windows-2022",
-            "buildArgs": {
-                "OS_BASE": "ltsc2019"
+        "os": {
+            "dockerfile": "{{matrix.os}}/Dockerfile",
+            "tags": {
+                "linux": {
+                    "runner": "ubuntu-latest",
+                    "matrix": {
+                        "architecture": {
+                            "tags": {
+                                "amd64": {}
+                            }
+                        }
+                    }
+                },
+                "windows": {
+                    "runner": "windows-2022",
+                    "matrix": {
+                        "release": {
+                            "tags": {
+                                "ltsc2019": {}
+                            },
+                            "buildArgs": {
+                                "OS_BASE": "{{matrix.release}}"
+                            }
+                        }
+                    }
+                }
             }
         }
-    ],
-    "variants": [
-        {
-            "tag": "latest"
-        }
-    ]
+    }
 }

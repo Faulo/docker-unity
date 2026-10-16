@@ -18,7 +18,7 @@ The target-specific tags contain only the selected target and its attestations. 
 
 GitHub builds the Windows LTSC 2019 target on `windows-2022` with Hyper-V isolation. The runner is explicit so a `windows-latest` host upgrade cannot silently change the build environment; the Windows Server 2025 runner failed to import the combined dependency layer during this migration.
 
-The former `latest-linux` and `latest-windows` tags are no longer maintained. Use `latest-linux-amd64` and `latest-windows-ltsc2019` instead. Intermediate platform/family tags are requested in [workflows-docker #2](https://github.com/Faulo/workflows-docker/issues/2); historical tags are not deleted by this migration.
+Schema version `3` in `docker.json` uses recursive product, OS, and architecture or release axes. It maintains `latest-linux` and `latest-windows` as intermediate indices selecting only that OS, while preserving the exact `latest-linux-amd64` and `latest-windows-ltsc2019` tags. `{{matrix.release}}` supplies `OS_BASE`; this adds no builds. Unconfigured historical tags are retained.
 
 Windows derives from `faulo/choco:windows-${OS_BASE}` to retain Unity's full desktop API surface. The shared base supplies Chocolatey, Visual C++ prerequisites, and shell/installer compatibility fixes. The existing package dependencies install through `choco-install`, including the selected .NET SDK and Blender release line. Unity Hub/editor extraction and application-specific setup remain in this project.
 
