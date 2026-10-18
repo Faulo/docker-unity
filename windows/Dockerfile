@@ -7,8 +7,8 @@ ENV NUGET_PACKAGES=C:/nuget/packages
 
 COPY . .
 
-# hadolint shell=powershell
-RUN dotnet publish --runtime win-x64
+# Nano Server uses cmd; exclude temporary restore caches from the compiler layer.
+RUN ["cmd.exe", "/D", "/S", "/C", "dotnet publish --runtime win-x64 --disable-build-servers && dotnet nuget locals all --clear"]
 
 FROM faulo/choco:windows-${OS_BASE}
 

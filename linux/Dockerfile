@@ -8,7 +8,8 @@ COPY . .
 
 RUN set -eux; \
     test "$TARGETARCH" = "amd64"; \
-    dotnet publish --runtime linux-x64
+    dotnet publish --runtime linux-x64 --disable-build-servers; \
+    dotnet nuget locals all --clear
 
 FROM debian:trixie-slim
 
