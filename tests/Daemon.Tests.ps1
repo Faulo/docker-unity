@@ -40,7 +40,7 @@ Describe "Docker MCP daemon contract [$Os, $Image]" -Tag 'DockerDaemon' {
             $arguments = @(
                 '--context', $Context, 'exec', $controller,
                 'curl', '--silent', '--show-error', '--fail', '--no-buffer',
-                '--max-time', '300', '--noproxy', '*',
+                '--max-time', '300', '--noproxy', '127.0.0.1',
                 '--header', 'Content-Type: application/json',
                 '--header', 'Accept: application/json, text/event-stream'
             )
@@ -131,9 +131,10 @@ Describe "Docker MCP daemon contract [$Os, $Image]" -Tag 'DockerDaemon' {
 
         function Invoke-DaemonHttp {
             param([string] $Path, [string[]] $Arguments = @())
+            # Requests use loopback; a literal host avoids native wildcard expansion on Unix.
             return Invoke-DockerOutput -Context $Context -Arguments (@(
                 'exec', $controller, 'curl', '--silent', '--show-error', '--fail',
-                '--max-time', '60', '--noproxy', '*'
+                '--max-time', '60', '--noproxy', '127.0.0.1'
             ) + $Arguments + @('http://127.0.0.1:8080' + $Path))
         }
 
