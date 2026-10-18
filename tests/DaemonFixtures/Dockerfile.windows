@@ -1,0 +1,10 @@
+ARG BASE_IMAGE
+FROM mcr.microsoft.com/dotnet/sdk:9.0-nanoserver-1809 AS backend
+WORKDIR C:/source
+ENV NUGET_PACKAGES=C:/nuget/packages
+COPY common/Unity.DaemonTests.Backend/ ./
+RUN ["cmd.exe", "/D", "/S", "/C", "dotnet publish --runtime win-x64 --self-contained false --disable-build-servers --output C:/backend && dotnet nuget locals all --clear"]
+
+FROM ${BASE_IMAGE}
+COPY --from=backend C:/backend/unity.exe C:/Windows/php.exe
+ENV UNITY_CALL_TIMEOUT=300

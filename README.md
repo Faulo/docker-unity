@@ -14,7 +14,7 @@ Node.js, npm, Butler, and SteamCMD are intentionally not included.
 - `faulo/unity:latest-linux-amd64` targets Linux amd64.
 - `faulo/unity:latest-windows-ltsc2019` targets Windows Server 2019 specifically.
 
-The target-specific tags contain only the selected target and its attestations. Integration tests cover `latest` and the matching target-specific tag on each host. Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
+The target-specific tags contain only the selected target and its attestations. Jenkins integration tests cover the product variants configured in `.jenkins/pesterProject.properties` on each host. Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
 
 GitHub builds the Windows LTSC 2019 target on `windows-2022` with Hyper-V isolation. The runner is explicit so a `windows-latest` host upgrade cannot silently change the build environment; the Windows Server 2025 runner failed to import the combined dependency layer during this migration.
 
@@ -109,21 +109,26 @@ Candidate images must use the disposable namespace:
 
 ```console
 docker --context garl build --file linux/Dockerfile --tag tmp/unity:latest .
-docker --context dende build --file windows/Dockerfile --tag tmp/unity:latest .
+docker --context popo build --file windows/Dockerfile --tag tmp/unity:latest .
 docker --context garl image tag tmp/unity:latest tmp/unity:latest-linux-amd64
-docker --context dende image tag tmp/unity:latest tmp/unity:latest-windows-ltsc2019
+docker --context popo image tag tmp/unity:latest tmp/unity:latest-windows-ltsc2019
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl
-pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context dende
+pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context popo
 pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl -Variant latest-linux-amd64
-pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context dende -Variant latest-windows-ltsc2019
+pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context popo -Variant latest-windows-ltsc2019
 ```
 
 GitHub uses the shared [workflows-docker v3 caller](https://github.com/Faulo/workflows-docker/blob/v3/examples/docker.yml) and [`docker.json`](docker.json) for native builds and publication. Namespace and image resolve from the same tracked `.env` used by Jenkins. Docker Hub credentials must allow publication and deletion of run-specific staging tags. GitHub verifies published digests/platform metadata and staging-tag cleanup; project tests run in Jenkins.
 
-Jenkins runs unit tests in the .NET 9 SDK container on a Linux agent and publishes each stage's reports with its native `junit` step.
-The unit project writes `common/Unity.Tests/TestResults/TestResults.xml`; daemon stages write fresh reports below `.reports/daemon-<os>/` and select only their OS fixture so Jenkins receives no duplicate opposite-OS skips.
-Separate Jenkins daemon stages run on Garl and Dende through [`.jenkins/Invoke-DaemonTests.ps1`](.jenkins/Invoke-DaemonTests.ps1). The script builds a disposable SDK runner with the Docker client, connects through the local `linux` or `windows` context, translates mounted agent workspaces to daemon-visible fixture paths, and requires coverage for the selected OS with `UNITY_DAEMON_TEST_REQUIRED_OS`. Linux uses host networking for the fixture's loopback port. Windows uses process isolation on LTSC 2019 hosts and Hyper-V on newer hosts, passed to fixture builds and controller containers without changing the daemon's global configuration.
+Jenkins runs `dotnet test --logger junit` in the .NET 9 SDK container on a Linux agent, then runs the Pester image integration suite on Garl and Popo. Add integration coverage under `tests/`; Jenkins publishes the reports with its native `junit` step.
+The Pester suite exercises the installed tools, Unity editor commands, and MCP project discovery through a real Docker probe. Its project fixture is copied into a disposable daemon volume, so it also works with remote Docker contexts without requiring a shared checkout path.
+
+Pester also checks MCP argument and exit-status forwarding, concurrent request credentials, worker reuse and mount isolation, progress notifications, and WebGL HTTP behavior. These checks derive disposable `tmp/` fixtures from the selected image and replace only its external PHP/Composer command backend. The native launcher, sidecar, Docker probes, and workers remain real. The daemon must be able to build the matching .NET 9 SDK fixture.
+
+Run this daemon coverage alone with `pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Pull -Context popo -TestsPath tests/Daemon.Tests.ps1`, or use `-Context garl` for Linux.
+
+The optional [`.jenkins/Invoke-DaemonTests.ps1`](.jenkins/Invoke-DaemonTests.ps1) development runner builds a disposable SDK image with the Docker client, connects through the local `linux` or `windows` context, translates mounted workspaces to daemon-visible fixture paths, and requires coverage for the selected OS with `UNITY_DAEMON_TEST_REQUIRED_OS`. It writes fresh reports below `.reports/daemon-<os>/` and selects only that OS fixture. Linux uses host networking for the fixture's loopback port. Windows uses process isolation on LTSC 2019 hosts and Hyper-V on newer hosts, passed to fixture builds and controller containers without changing the daemon's global configuration.
 
 Run the same daemon runner locally with `pwsh ./.jenkins/Invoke-DaemonTests.ps1 -Context linux` or `-Context windows`. `-RepositoryHostPath` supplies an explicit checkout path visible to the daemon when automatic Jenkins mount detection is unavailable; `-WindowsIsolation` overrides the compatible Windows isolation selection.
 
-Image integration tests use the hosts and product variants configured in `.jenkins/pesterProject.properties`, plus each host's matching target-specific tag. Every invocation selects its Docker context explicitly.
+Image integration tests use the hosts and product variants configured in `.jenkins/pesterProject.properties`. The commands above also validate target-specific tags explicitly.

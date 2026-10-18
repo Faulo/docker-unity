@@ -1,9 +1,9 @@
 ﻿<component name="ProjectRunConfigurationManager">
-    <configuration default="false" name="Integration Tests on Dende (prod)" type="ShConfigurationType" singleton="true">
+    <configuration default="false" name="Integration Tests on Popo (tmp)" type="ShConfigurationType" singleton="true">
         <option name="SCRIPT_TEXT" value="" />
         <option name="INDEPENDENT_SCRIPT_PATH" value="true" />
         <option name="SCRIPT_PATH" value="$PROJECT_DIR$/.jenkins/Invoke-IntegrationTests.ps1" />
-        <option name="SCRIPT_OPTIONS" value="-Pull -Context dende" />
+        <option name="SCRIPT_OPTIONS" value="-Namespace tmp -Context popo" />
         <option name="INDEPENDENT_SCRIPT_WORKING_DIRECTORY" value="true" />
         <option name="SCRIPT_WORKING_DIRECTORY" value="$PROJECT_DIR$" />
         <option name="INDEPENDENT_INTERPRETER_PATH" value="false" />

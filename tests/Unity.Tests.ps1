@@ -169,6 +169,85 @@ Describe "Docker image command contract [$Os, $Image]" {
             ) | Out-Null
         }
     }
+
+    It 'reads a project through a real Docker daemon probe' {
+        $id = [guid]::NewGuid().ToString('N')
+        $seed = "unity-project-seed-$id"
+        $controller = "unity-project-controller-$id"
+        $volume = "unity-project-$id"
+        $fixtureTarget = if ($Os -eq 'windows') { 'C:\fixture' } else { '/fixture' }
+        $dockerMount = if ($Os -eq 'windows') {
+            'type=npipe,source=\\.\pipe\docker_engine,target=\\.\pipe\docker_engine'
+        } else {
+            'type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock'
+        }
+
+        try {
+            Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments @(
+                'run', '--detach', '--tty', '--name', $seed,
+                '--mount', "type=volume,source=$volume,target=$fixtureTarget", $Image, $keeperCommand
+            )
+            $fixture = Join-Path $PSScriptRoot '../common/Unity.Tests/test-files/ValidProject'
+            if ($Os -eq 'windows') {
+                # Docker's Windows archive copy writes into the container layer;
+                # extract inside the running container to populate its volume.
+                $archive = Join-Path $TestDrive 'project.zip'
+                Compress-Archive -Path (Join-Path $fixture '*') -DestinationPath $archive
+                Invoke-Docker -Context $Context -Arguments @('cp', $archive, "${seed}:C:\Windows\Temp\project.zip")
+                Invoke-Docker -Context $Context -Arguments @(
+                    'exec', $seed, 'pwsh', '-NoProfile', '-Command',
+                    '[IO.Compression.ZipFile]::ExtractToDirectory("C:\Windows\Temp\project.zip", "C:\fixture")'
+                )
+            } else {
+                Invoke-Docker -Context $Context -Arguments @('cp', "$fixture/.", "${seed}:$fixtureTarget")
+            }
+            $seedConfig = Invoke-DockerOutput -Context $Context -Arguments @('inspect', $seed) | ConvertFrom-Json
+            $projectRoot = @($seedConfig[0].Mounts | Where-Object { $_.Name -eq $volume })[0].Source
+
+            Invoke-Docker -Context $Context -RunArguments $DockerRunArguments -Arguments @(
+                'run', '--detach', '--name', $controller,
+                '--env', 'UNITY_MCP=1', '--mount', $dockerMount, $Image
+            )
+            $healthResult = $null
+            for ($attempt = 1; $attempt -le 30; $attempt++) {
+                $healthResult = Get-DockerCommandResult -Context $Context -Arguments @(
+                    'exec', $controller, 'unity-sidecar', 'health'
+                )
+                if ($healthResult.ExitCode -eq 0) { break }
+                Start-Sleep -Seconds 1
+            }
+            $healthResult.ExitCode | Should -Be 0 -Because ($healthResult.Output | Out-String)
+
+            $request = @{
+                jsonrpc = '2.0'
+                id = 1
+                method = 'tools/call'
+                params = @{
+                    name = 'get_project_info'
+                    arguments = @{ projectRoot = $projectRoot }
+                }
+            } | ConvertTo-Json -Depth 5 -Compress
+            $response = Invoke-DockerOutput -Context $Context -Arguments @(
+                'exec', $controller, 'curl', '--silent', '--show-error', '--fail',
+                '--max-time', '120', '--request', 'POST',
+                '--header', 'Content-Type: application/json',
+                '--header', 'Accept: application/json, text/event-stream',
+                '--data', $request, 'http://127.0.0.1:8080/mcp'
+            )
+            $events = @($response -split '\r?\n' | Where-Object { $_.StartsWith('data: ') })
+            $events.Count | Should -Be 1 -Because $response
+            $message = $events[0].Substring(6) | ConvertFrom-Json
+            $message.result.PSObject.Properties['isError']?.Value | Should -Not -BeTrue -Because $response
+            $project = $message.result.structuredContent.result
+            $project.projectName | Should -BeExactly 'Example Game'
+            $project.editor.version | Should -BeExactly '6000.3.13f1'
+            $project.rendering.renderPipeline | Should -BeExactly 'Universal'
+            $project.packages.custom | Should -BeExactly '1.2.3'
+        } finally {
+            Get-DockerCommandResult -Context $Context -Arguments @('rm', '--force', '--volumes', $controller, $seed) | Out-Null
+            Get-DockerCommandResult -Context $Context -Arguments @('volume', 'rm', $volume) | Out-Null
+        }
+    }
 }
 
 Describe "Unity image identity and contents [$Os, $Image]" {
