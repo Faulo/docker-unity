@@ -16,35 +16,11 @@ pipeline {
                 }
             }
             steps {
-                exec 'dotnet test common/Unity.Tests/Unity.Tests.csproj --configuration Release --logger junit'
+                exec 'dotnet test --logger junit'
             }
             post {
                 always {
-                    junit(testResults: 'common/Unity.Tests/TestResults/TestResults.xml', allowEmptyResults: false)
-                }
-            }
-        }
-        stage('Daemon Tests') {
-            steps {
-                script {
-                    for (def target in ['Garl', 'Dende']) {
-                        node(target) {
-                            checkout scm
-                            def os = isWindows() ? 'windows' : 'linux'
-                            dir(".reports/daemon-${os}") {
-                                deleteDir()
-                            }
-                            stage("Daemon: ${target}") {
-                                timeout(time: 30, unit: 'MINUTES') {
-                                    try {
-                                        exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-DaemonTests.ps1 -Context ${os}"
-                                    } finally {
-                                        junit(testResults: ".reports/daemon-${os}/TestResults-*.xml", allowEmptyResults: false)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    junit(testResults: '**/TestResults.xml', allowEmptyResults: false)
                 }
             }
         }
@@ -128,7 +104,6 @@ def pesterProject(config) {
         stage("Host: ${target}") {
             node(target) {
                 def os = isWindows() ? 'windows' : 'linux'
-                def context = os
 
                 checkout scm
 
@@ -137,8 +112,7 @@ def pesterProject(config) {
                 }
 
                 withEnvFile {
-                    def targetVariant = os == 'windows' ? 'latest-windows-ltsc2019' : 'latest-linux-amd64'
-                    for (def variant in (variants + [targetVariant]).unique()) {
+                    for (def variant in variants) {
                         def image = "${env.DOCKER_NAMESPACE}/${env.DOCKER_IMAGE}:${variant}"
                         def safeImage = image.replaceAll('[^A-Za-z0-9_.-]+', '-')
                         def resultsPath = ".reports/${safeImage}-${os}.xml"
@@ -154,7 +128,7 @@ def pesterProject(config) {
                                     timeout(time: timeoutMinutes, unit: 'MINUTES') {
                                         echo "Testing ${image} on ${target}"
                                         try {
-                                            exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Context ${context} -Variant ${variant} -Pull -TestsPath tests -ResultsPath ${resultsPath}"
+                                            exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -Pull -TestsPath tests -ResultsPath ${resultsPath}"
                                         } finally {
                                             junit(
                                                 testResults: resultsPath,
