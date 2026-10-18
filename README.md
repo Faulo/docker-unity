@@ -1,134 +1,277 @@
-# Unity Docker image
+# Unity builds, tests, and MCP for Linux and Windows
 
-Cross-platform Unity build and test image for Linux and Windows. Published images are available as `faulo/unity`.
+[![Docker](https://github.com/Faulo/docker-unity/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/Faulo/docker-unity/actions/workflows/docker.yml) [![Docker image updated](https://img.shields.io/docker/last-updated/faulo/unity/latest)](https://hub.docker.com/r/faulo/unity/tags?name=latest) [![License: MIT](https://img.shields.io/github/license/Faulo/docker-unity)](LICENSE) [![Platforms: Linux and Windows amd64](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20amd64-0078D4)](#available-images)
+
+[`faulo/unity`](https://hub.docker.com/r/faulo/unity) provides a container
+environment for Unity builds and automated tests on Linux and Windows. It
+combines Unity Hub, the [`slothsoft/unity`](https://github.com/Faulo/slothsoft-unity)
+command tools, and a native sidecar with an optional Model Context Protocol
+(MCP) server.
+
+Run Unity commands directly in a build pipeline, or connect an MCP client to
+discover projects, run tests, execute editor methods, and build WebGL previews.
+Unity editors are installed on demand and can be retained in a shared volume.
+
+[Docker Hub](https://hub.docker.com/r/faulo/unity) ·
+[Image tags](https://hub.docker.com/r/faulo/unity/tags) ·
+[Report an issue](https://github.com/Faulo/docker-unity/issues)
+
+## Available images
+
+| Tag | Platform | Base |
+| --- | --- | --- |
+| `latest` | Linux amd64 and Windows amd64 | Selects the matching platform |
+| `latest-linux`, `latest-linux-amd64` | Linux amd64 | Debian Trixie Slim |
+| `latest-windows`, `latest-windows-ltsc2019` | Windows amd64 | Full Windows LTSC 2019 through `faulo/choco:windows-ltsc2019` |
+
+Linux images require an amd64 Linux container engine. Windows images require a
+compatible Windows container engine and isolation mode. The Windows variant
+uses the full Windows base image to provide the desktop APIs Unity needs.
+
+Tags are rebuilt on a monthly schedule and when changes are published. Use an
+image digest when a pipeline needs a fixed image revision. The configured tag
+families are defined in [`docker.json`](docker.json).
+
+## Quick start
+
+Inspect the available commands:
+
+```console
+docker run --rm faulo/unity:latest unity --help
+```
+
+Run the test suite for an empty project with a specific Unity editor:
+
+```console
+docker run --rm --env UNITY_CREDENTIALS_USR --env UNITY_CREDENTIALS_PSW --env EMAIL_CREDENTIALS_USR --env EMAIL_CREDENTIALS_PSW --mount type=volume,source=unity-editors,target=/root/Unity faulo/unity:latest-linux unity empty-project test 2022.3.62f3
+```
+
+Set the credential variables in your shell or CI environment first. The first
+run may download the editor and take substantially longer than later runs.
+Unity authentication and licensing requirements still apply.
+
+The example above uses Linux paths. On Windows, select
+`faulo/unity:latest-windows` and use
+`target=c:/program files/unity/hub/editor` for the editor volume, quoting the
+complete `--mount` value because it contains spaces.
+
+The public `unity` executable forwards arguments to
+`composer exec unity-command --` and returns the command's exit status.
+The image has no entrypoint, so commands such as `php`, `dotnet`, or
+`blender` can also replace the default command.
 
 ## Included tools
 
-Both variants include Unity Hub, the `unity` command stack, Git and Git LFS, PHP 8.4 and Composer, .NET SDK and DocFX, Python, FFmpeg, Blender, Nano, and Zip. Windows also includes PowerShell. The Linux base packages are declared in [`linux/unity.packages`](linux/unity.packages); Windows dependencies are declared in [`windows/unity.nuspec`](windows/unity.nuspec). Windows installs the current official PECL IMAP build because PHP 8.4 no longer bundles it.
+| Tools | Purpose |
+| --- | --- |
+| Unity Hub and `slothsoft/unity` | Editor installation, Unity commands, builds, and tests |
+| Native `unity` launcher and `unity-sidecar` | Command supervision, health checks, and MCP |
+| Git and Git LFS | Source control and large assets |
+| PHP 8.4 and Composer | Unity command backend, including IMAP support |
+| .NET 9 SDK and DocFX | Managed builds and documentation |
+| Blender 4.5 and FFmpeg | Asset processing |
+| Python, Nano, and Zip | Scripting and utility commands |
+| PowerShell on Windows | Windows automation |
 
-Node.js, npm, Butler, and SteamCMD are intentionally not included.
+Package declarations are maintained in
+[`linux/unity.packages`](linux/unity.packages) and
+[`windows/unity.nuspec`](windows/unity.nuspec), with additional setup in each
+Dockerfile. Node.js, npm, Butler, and SteamCMD are not included.
 
-## Image variants
+## Run the MCP sidecar
 
-- `faulo/unity:latest` is the primary multi-platform image.
-- `faulo/unity:latest-linux-amd64` targets Linux amd64.
-- `faulo/unity:latest-windows-ltsc2019` targets Windows Server 2019 specifically.
+The default command is `unity-sidecar`. Set `UNITY_MCP=1` to enable its HTTP
+MCP endpoint at `/mcp` on container port 8080. The sidecar uses the mounted
+Docker engine to inspect projects and create isolated worker containers from
+its own image.
 
-The target-specific tags contain only the selected target and its attestations. Jenkins integration tests cover the product variants configured in `.jenkins/pesterProject.properties` on each host. Linux hosts require an amd64 Docker daemon. Windows images require a compatible Windows Server 2019 daemon.
+For a Linux container engine, save this as `compose.yaml`:
 
-GitHub builds the Windows LTSC 2019 target on `windows-2022` with Hyper-V isolation. The runner is explicit so a `windows-latest` host upgrade cannot silently change the build environment; the Windows Server 2025 runner failed to import the combined dependency layer during this migration.
+```yaml
+services:
+  unity:
+    image: faulo/unity:latest-linux
+    environment:
+      UNITY_MCP: "1"
+    ports:
+      - "127.0.0.1:3310:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - unity-editors:/root/Unity
+      - unity-config:/root/.config/unity3d
+      - unity-hub:/root/.config/unityhub
+      - unity-cache:/root/.cache/Unity
+      - unity-licenses:/root/.local/share/unity3d
 
-Schema version `3` in `docker.json` uses recursive product, OS, and architecture or release axes. It maintains `latest-linux` and `latest-windows` as intermediate indices selecting only that OS, while preserving the exact `latest-linux-amd64` and `latest-windows-ltsc2019` tags. `{{matrix.release}}` supplies `OS_BASE`; this adds no builds. Unconfigured historical tags are retained.
+volumes:
+  unity-editors:
+  unity-config:
+  unity-hub:
+  unity-cache:
+  unity-licenses:
+```
 
-Windows derives from `faulo/choco:windows-${OS_BASE}` to retain Unity's full desktop API surface. The shared base supplies Chocolatey, Visual C++ prerequisites, and shell/installer compatibility fixes. The existing package dependencies install through `choco-install`, including the selected .NET SDK and Blender release line. Unity Hub/editor extraction and application-specific setup remain in this project.
+For a Windows container engine, use this configuration instead:
 
-Windows installs the .NET Framework 4.7.1 Developer Pack through its normal Chocolatey dependency for Unity-generated projects. Temporary archive tooling is declared separately in [`windows/unity-build.nuspec`](windows/unity-build.nuspec); its package and 7-Zip are removed after Unity Hub preparation. The SDK is checked by compiling and running a real console application in a fresh build layer and in the image integration suite.
+```yaml
+services:
+  unity:
+    image: faulo/unity:latest-windows
+    environment:
+      UNITY_MCP: "1"
+    ports:
+      - "127.0.0.1:3310:8080"
+    volumes:
+      - type: npipe
+        source: '\\.\pipe\docker_engine'
+        target: '\\.\pipe\docker_engine'
+      - unity-editors:c:/program files/unity/hub/editor
+      - unity-config:c:/users/containeradministrator/appdata/roaming/unity
+      - unity-hub:c:/users/containeradministrator/appdata/roaming/unityhub
+      - unity-cache:c:/users/containeradministrator/appdata/local/unity
+      - unity-licenses:c:/programdata/unity
 
-Report ordinary Chocolatey installer stalls or failures to [Faulo/docker-choco](https://github.com/Faulo/docker-choco/issues) and link them from the downstream migration. Include the package ID/version, base tag/digest, host Windows build and isolation mode, exact command/nuspec, relevant complete logs, exit code or timeout, and a minimal fresh-container reproduction without credentials. Keep the affected migration blocked until the shared fix is available and validated; do not add downstream installer bypasses or compatibility patches.
+volumes:
+  unity-editors:
+  unity-config:
+  unity-hub:
+  unity-cache:
+  unity-licenses:
+```
 
-## Build arguments
+Start the service and check its health:
 
-| Argument | Default | Purpose |
+```console
+docker compose up -d
+docker compose exec unity unity-sidecar health
+docker compose logs --follow unity
+```
+
+Connect an HTTP MCP client to `http://127.0.0.1:3310/mcp`. Give the client a
+timeout long enough for editor downloads and cold imports; the server sends
+progress notifications during long operations. Cold imports can take
+30–60 minutes.
+
+The server accepts loopback host names and rejects non-loopback browser
+origins. Keep the endpoint on a trusted local interface. Docker socket or
+named-pipe access gives the sidecar control over that Docker engine.
+
+Do not override the container hostname: the sidecar uses it to identify its
+own container. Supply project paths as absolute paths visible to the Docker
+daemon; a remote engine needs the path on its host. Workers mount the project's
+`Assets`, `Packages`, and `ProjectSettings` directories and inherit the
+sidecar's editor, configuration, cache, and license mounts.
+
+### MCP tools
+
+| Tool | Purpose |
+| --- | --- |
+| `get_project_info` | Read project metadata and package configuration without launching Unity |
+| `run_tests` | Run Unity Test Runner modes and return test results |
+| `execute_method` | Run a fully qualified static editor method with optional arguments |
+| `build_and_serve_webgl` | Build WebGL and serve the result from the HTTP listener |
+
+## Credentials and configuration
+
+Direct commands and the sidecar accept these environment variables:
+
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `UNITY_TIMEOUT` | `14400` | Configures Composer's child-process timeout in seconds. |
-| `DOTNET_VERSION` | `9.0` | Selects the runtime .NET SDK release line. |
-| `BLENDER_SERIES` | `4.5` | Selects the Blender release line. |
-| `OS_BASE` | `ltsc2019` | Selects the Windows base release. |
+| `UNITY_CREDENTIALS_USR`, `UNITY_CREDENTIALS_PSW` | Unset | Unity account credentials |
+| `EMAIL_CREDENTIALS_USR`, `EMAIL_CREDENTIALS_PSW` | Unset | Mailbox credentials when Unity sends an email two-factor code |
+| `UNITY_MCP` | `0` | Set to `1` to enable the MCP server |
+| `UNITY_CALL_TIMEOUT` | `86400` | Maximum command duration in seconds |
+| `UNITY_NO_GRAPHICS` | `1` | Configure headless Unity execution |
+| `UNITY_ACCELERATOR_ENDPOINT` | Empty | Optional Unity Accelerator endpoint |
+| `UNITY_LOGGING` | `stdin stdout stderr` | Command logging streams |
 
-## Commands
+Each credential variable also supports a `_FILE` suffix, such as
+`UNITY_CREDENTIALS_PSW_FILE`, to read a mounted file or Docker secret.
+Supply credentials through your environment or secret store rather than
+committing their values to a Compose file.
 
-Run a Unity package command:
+For shared MCP use, clients can send credentials with every HTTP request:
 
-```console
-docker run --rm faulo/unity:latest unity empty-project test 2022.3.62f3
-```
+| Request header | Container fallback |
+| --- | --- |
+| `X-Unity-Credentials-Usr` | `UNITY_CREDENTIALS_USR` |
+| `X-Unity-Credentials-Psw` | `UNITY_CREDENTIALS_PSW` |
+| `X-Email-Credentials-Usr` | `EMAIL_CREDENTIALS_USR` |
+| `X-Email-Credentials-Psw` | `EMAIL_CREDENTIALS_PSW` |
 
-The public `unity` executable forwards its arguments to `composer exec unity-command --`. The image starts `unity-sidecar` by default; health checks use `unity-sidecar health`.
+Each supplied header overrides its corresponding fallback for that request.
+Request credentials are passed only to that tool execution and are not retained
+in shared controller state, worker configuration, labels, logs, or tool results.
+Missing values are allowed through so Unity can report its authentication error.
 
-## Credentials
+## Persistent storage
 
-For a single credential identity, the sidecar and direct `unity` commands accept these container environment variables as fallbacks:
+The Compose examples retain the image's declared editor, configuration, cache,
+and license directories. The sidecar shares these mounts with its workers, so
+editors can be reused across requests and container recreation.
 
-- `UNITY_CREDENTIALS_USR` and `UNITY_CREDENTIALS_PSW`
-- `UNITY_CREDENTIALS_USR_FILE` and `UNITY_CREDENTIALS_PSW_FILE`
+Runtime supervision state lives at `/run/unity` on Linux and
+`C:\ProgramData\unity` on Windows. The built-in Docker health check runs
+`unity-sidecar health` every 60 seconds, with a 10-second timeout, 30-second
+start period, and three retries.
 
-Email credentials use the equivalent `EMAIL_CREDENTIALS_USR`, `EMAIL_CREDENTIALS_PSW`, `EMAIL_CREDENTIALS_USR_FILE`, and `EMAIL_CREDENTIALS_PSW_FILE` variables. They are needed when Unity sends its two-factor code by email. Values may come from the host environment, Jenkins, Docker Compose interpolation, or Docker secrets; avoid committing credentials to a Compose file.
+## Development and tests
 
-For a shared MCP server, each client should send credentials with every HTTP request. The four request headers are `X-Unity-Credentials-Usr`, `X-Unity-Credentials-Psw`, `X-Email-Credentials-Usr`, and `X-Email-Credentials-Psw`. A supplied header overrides its corresponding container fallback for that request only. Missing values are allowed through so Unity can report its normal authentication error; the MCP server does not require complete pairs. Request header values are captured only for that tool execution and are not stored in shared controller state, retained worker configuration, labels, logs, or tool results.
+The repository contains daemon-free NUnit tests in
+[`common/Unity.Tests`](common/Unity.Tests), real Docker-engine tests in
+[`common/Unity.DaemonTests`](common/Unity.DaemonTests), and Pester image
+integration tests in [`tests`](tests).
 
-Codex can map local environment variables to those headers without putting their values in `config.toml`:
-
-```toml
-[mcp_servers.compose-unity]
-url = "http://127.0.0.1:3310/mcp"
-tool_timeout_sec = 3600
-
-[mcp_servers.compose-unity.env_http_headers]
-X-Unity-Credentials-Usr = "UNITY_CREDENTIALS_USR"
-X-Unity-Credentials-Psw = "UNITY_CREDENTIALS_PSW"
-X-Email-Credentials-Usr = "EMAIL_CREDENTIALS_USR"
-X-Email-Credentials-Psw = "EMAIL_CREDENTIALS_PSW"
-```
-
-Each Codex process reads the named variables from its own environment and sends the resulting headers, so multiple clients can use the same `compose-unity` endpoint with different identities. `env_vars` is not used here because it configures environment forwarding for local stdio MCP servers, not headers for an HTTP MCP server.
-
-## Sidecar and MCP
-
-Set `UNITY_MCP=1` to expose the Unity MCP server over HTTP on port 8080. Persistent runtime state is kept in `/run/unity` on Linux and `C:\ProgramData\unity` on Windows. `UNITY_CALL_TIMEOUT` controls the maximum command duration in seconds and defaults to 86400.
-
-The sidecar creates isolated worker containers through the mounted Docker daemon. Mount the daemon socket or named pipe and the Unity editor volume appropriate to the host platform.
-
-## Volumes
-
-Linux declares Unity editor, configuration, cache, and license locations below `/root`. Windows declares the corresponding editor and application-data locations. The editor volume is named `unity-binaries` by the repository test tooling.
-
-## Repository layout
-
-- `common/Unity/` contains the cross-platform native launcher and sidecar.
-- `common/Unity.Tests/` contains daemon-free NUnit tests.
-- `common/Unity.DaemonTests/` and `common/Unity.DaemonTests.Backend/` contain real-daemon integration tests.
-- `linux/` and `windows/` contain their platform Dockerfiles and package manifests.
-- `tests/` contains published-image Pester integration coverage.
-
-## Development
-
-Build and test the solution:
+With the .NET 9 SDK installed, run the daemon-free tests:
 
 ```console
-dotnet test docker-unity.sln --configuration Release --logger junit
+dotnet test common/Unity.Tests/Unity.Tests.csproj --configuration Release --logger junit
 ```
 
-Run daemon tests explicitly against the named local Docker contexts:
+Integration coverage exercises installed tools, SDK compilation, Unity editor
+commands, project discovery, argument and exit-status forwarding, concurrent
+request credentials, worker reuse and mount isolation, progress notifications,
+and WebGL HTTP behavior. Real-engine tests require a matching Linux or Windows
+Docker engine and can create disposable containers, volumes, and images.
+
+Both Dockerfiles use the repository root as their build context. Build a local
+candidate with an engine matching the selected platform:
 
 ```console
-$env:UNITY_DAEMON_TEST_REQUIRED_OS = 'linux'
-dotnet test common/Unity.DaemonTests/Unity.DaemonTests.csproj --configuration Release --logger junit
+docker build --file linux/Dockerfile --tag tmp/unity:latest .
 ```
-
-Candidate images must use the disposable namespace:
 
 ```console
-docker --context garl build --file linux/Dockerfile --tag tmp/unity:latest .
-docker --context popo build --file windows/Dockerfile --tag tmp/unity:latest .
-docker --context garl image tag tmp/unity:latest tmp/unity:latest-linux-amd64
-docker --context popo image tag tmp/unity:latest tmp/unity:latest-windows-ltsc2019
-pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl
-pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context popo
-pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context garl -Variant latest-linux-amd64
-pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context popo -Variant latest-windows-ltsc2019
+docker build --file windows/Dockerfile --tag tmp/unity:latest .
 ```
 
-GitHub uses the shared [workflows-docker v3 caller](https://github.com/Faulo/workflows-docker/blob/v3/examples/docker.yml) and [`docker.json`](docker.json) for native builds and publication. Namespace and image resolve from the same tracked `.env` used by Jenkins. Docker Hub credentials must allow publication and deletion of run-specific staging tags. GitHub verifies published digests/platform metadata and staging-tag cleanup; project tests run in Jenkins.
+### Build arguments
 
-Jenkins runs `dotnet test --logger junit` in the .NET 9 SDK container on a Linux agent, then runs the Pester image integration suite on Garl and Popo. Add integration coverage under `tests/`; Jenkins publishes the reports with its native `junit` step.
-The Pester suite exercises the installed tools, Unity editor commands, and MCP project discovery through a real Docker probe. Its project fixture is copied into a disposable daemon volume, so it also works with remote Docker contexts without requiring a shared checkout path.
+| Argument | Default | Applies to |
+| --- | --- | --- |
+| `UNITY_TIMEOUT` | `14400` | Composer child-process timeout in seconds, both images |
+| `DOTNET_VERSION` | `9.0` | Runtime SDK release line, both images |
+| `BLENDER_SERIES` | `4.5` | Blender release line, both images |
+| `OS_BASE` | `ltsc2019` | Windows base release |
 
-Pester also checks MCP argument and exit-status forwarding, concurrent request credentials, worker reuse and mount isolation, progress notifications, and WebGL HTTP behavior. These checks derive disposable `tmp/` fixtures from the selected image and replace only its external PHP/Composer command backend. The native launcher, sidecar, Docker probes, and workers remain real. The daemon must be able to build the matching .NET 9 SDK fixture.
+The shared [Docker publication workflow](https://github.com/Faulo/workflows-docker)
+uses [`docker.json`](docker.json) to define native builds, platform tags, and
+Docker Hub metadata.
 
-Run this daemon coverage alone with `pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Pull -Context popo -TestsPath tests/Daemon.Tests.ps1`, or use `-Context garl` for Linux.
+## Support and contributions
 
-The optional [`.jenkins/Invoke-DaemonTests.ps1`](.jenkins/Invoke-DaemonTests.ps1) development runner builds a disposable SDK image with the Docker client, connects through the local `linux` or `windows` context, translates mounted workspaces to daemon-visible fixture paths, and requires coverage for the selected OS with `UNITY_DAEMON_TEST_REQUIRED_OS`. It writes fresh reports below `.reports/daemon-<os>/` and selects only that OS fixture. Linux uses host networking for the fixture's loopback port. Windows uses process isolation on LTSC 2019 hosts and Hyper-V on newer hosts, passed to fixture builds and controller containers without changing the daemon's global configuration.
+Report bugs and feature requests through
+[GitHub issues](https://github.com/Faulo/docker-unity/issues). Include the image
+tag or digest, container OS, Docker version, isolation mode where relevant, and
+a minimal reproduction with credentials removed.
 
-Run the same daemon runner locally with `pwsh ./.jenkins/Invoke-DaemonTests.ps1 -Context linux` or `-Context windows`. `-RepositoryHostPath` supplies an explicit checkout path visible to the daemon when automatic Jenkins mount detection is unavailable; `-WindowsIsolation` overrides the compatible Windows isolation selection.
+Contributions are welcome. Add tests for behavior changes and keep shared
+launcher code in `common/`, with platform-specific packaging in `linux/` or
+`windows/`.
 
-Image integration tests use the hosts and product variants configured in `.jenkins/pesterProject.properties`. The commands above also validate target-specific tags explicitly.
+## License
+
+The repository's code and documentation are licensed under the
+[MIT License](LICENSE). Unity Hub, Unity editors, and the other bundled tools
+retain their respective licenses; the repository license does not grant a
+Unity subscription or editor license.

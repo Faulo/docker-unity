@@ -2,6 +2,8 @@
     "schemaVersion": 3,
     "namespace": "$DOCKER_NAMESPACE",
     "image": "$DOCKER_IMAGE",
+    "description": "Unity builds, tests, and MCP automation for Linux and Windows containers",
+    "overviewFile": "README.md",
     "context": ".",
     "matrix": {
         "product": {
