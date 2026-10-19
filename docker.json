@@ -5,6 +5,7 @@
     "description": "Unity builds, tests, and MCP automation for Linux and Windows containers",
     "overviewFile": "README.md",
     "context": ".",
+    "cleanupWindowsRunner": true,
     "matrix": {
         "product": {
             "tags": {
