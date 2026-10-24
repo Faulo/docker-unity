@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
+        <!-- This project only restores a package; it must also work with SDK overrides. -->
+        <TargetFramework>netstandard2.0</TargetFramework>
         <IsPublishable>false</IsPublishable>
     </PropertyGroup>
     <ItemGroup>
