@@ -257,6 +257,16 @@ RUN composer require ('slothsoft/unity'); \
     composer update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative; \
     if ($LASTEXITCODE -ne 0) { throw 'Failed to update Unity dependencies' }
 
+# Refresh the install layer when NuGet publishes an analyzer release.
+ADD https://api.nuget.org/v3-flatcontainer/microsoft.unity.analyzers/index.json C:/unity/analyzers-setup/versions.json
+COPY common/Unity.Analyzers C:/unity/analyzers-setup
+# hadolint shell=powershell
+RUN dotnet restore C:/unity/analyzers-setup/Install.csproj --packages C:/unity/analyzer-packages; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to restore Unity analyzers' }; \
+    dotnet msbuild C:/unity/analyzers-setup/Install.csproj -target:InstallUnityAnalyzers; \
+    if ($LASTEXITCODE -ne 0) { throw 'Failed to install Unity analyzers' }; \
+    Remove-Item -LiteralPath C:/unity/analyzers-setup, C:/unity/analyzer-packages -Recurse -Force
+
 # Test
 # hadolint shell=powershell
 RUN unity --help; \

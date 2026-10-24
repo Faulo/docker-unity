@@ -157,6 +157,13 @@ RUN install -m 0755 -d /unity && \
     composer config process-timeout "$UNITY_TIMEOUT" && \
     composer update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative
 
+# Refresh the install layer when NuGet publishes an analyzer release.
+ADD https://api.nuget.org/v3-flatcontainer/microsoft.unity.analyzers/index.json /tmp/unity-analyzers/versions.json
+COPY common/Unity.Analyzers /tmp/unity-analyzers
+RUN dotnet restore /tmp/unity-analyzers/Install.csproj --packages /tmp/unity-analyzer-packages && \
+    dotnet msbuild /tmp/unity-analyzers/Install.csproj -target:InstallUnityAnalyzers && \
+    rm -rf /tmp/unity-analyzers /tmp/unity-analyzer-packages
+
 # Test
 RUN unity --help && \
     rm -rf /run/unity

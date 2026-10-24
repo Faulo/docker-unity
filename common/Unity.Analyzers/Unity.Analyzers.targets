@@ -1,0 +1,9 @@
+<Project>
+    <!-- NuGet resolves project analyzers before assembly references. Prefer a
+         project's own analyzer package over the image's bundled copy. -->
+    <Target Name="IncludeBundledUnityAnalyzers" BeforeTargets="ResolveAssemblyReferences;CoreCompile" Condition="'$(Language)' == 'C#'">
+        <ItemGroup Condition="'@(Analyzer->WithMetadataValue('Filename', 'Microsoft.Unity.Analyzers'))' == ''">
+            <Analyzer Include="$(MSBuildToolsPath)/Unity.Analyzers/Microsoft.Unity.Analyzers.dll" />
+        </ItemGroup>
+    </Target>
+</Project>

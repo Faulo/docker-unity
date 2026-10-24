@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <IsPublishable>false</IsPublishable>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Unity.Analyzers" Version="*" GeneratePathProperty="true" PrivateAssets="all" />
+    </ItemGroup>
+    <Target Name="InstallUnityAnalyzers">
+        <Copy SourceFiles="$(PkgMicrosoft_Unity_Analyzers)/analyzers/dotnet/cs/Microsoft.Unity.Analyzers.dll"
+              DestinationFolder="$(MSBuildToolsPath)/Unity.Analyzers" />
+        <Copy SourceFiles="$(MSBuildThisFileDirectory)Unity.Analyzers.targets"
+              DestinationFolder="$(MSBuildToolsPath)/Current/Microsoft.Common.targets/ImportAfter" />
+    </Target>
+</Project>

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="../Engine/Engine.csproj" />
+    </ItemGroup>
+</Project>

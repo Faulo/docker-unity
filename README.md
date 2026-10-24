@@ -68,7 +68,7 @@ The image has no entrypoint, so commands such as `php`, `dotnet`, or
 | Native `unity` launcher and `unity-sidecar` | Command supervision, health checks, and MCP |
 | Git and Git LFS | Source control and large assets |
 | PHP 8.4 and Composer | Unity command backend, including IMAP support |
-| .NET 9 SDK and DocFX | Managed builds and documentation |
+| .NET 9 SDK, Microsoft.Unity.Analyzers, and DocFX | Managed builds, Unity diagnostics, and documentation |
 | Blender 4.5 and FFmpeg | Asset processing |
 | Python, Nano, and Zip | Scripting and utility commands |
 | PowerShell on Windows | Windows automation |
@@ -77,6 +77,34 @@ Package declarations are maintained in
 [`linux/unity.packages`](linux/unity.packages) and
 [`windows/unity.nuspec`](windows/unity.nuspec), with additional setup in each
 Dockerfile. Node.js, npm, Butler, and SteamCMD are not included.
+
+### Unity code analysis
+
+Both images bundle the latest stable `Microsoft.Unity.Analyzers` package at
+image build time. The .NET SDK loads its full analyzer set automatically for
+C# projects, including when running `dotnet` through `docker exec`. Projects
+that already reference `Microsoft.Unity.Analyzers` keep their own version.
+
+Run against a project or solution whose Unity references resolve inside the
+container:
+
+```console
+dotnet format --verify-no-changes
+```
+
+Analyzer defaults and the solution's `.editorconfig` control which rules run.
+Disabled-by-default rules such as `UNT0021` remain disabled unless explicitly
+enabled. For example, add this to the solution's `.editorconfig` to report
+Unity messages that should be protected:
+
+```editorconfig
+[*.cs]
+dotnet_diagnostic.UNT0021.severity = warning
+```
+
+Use `severity = none` to suppress a rule. The formatter's default minimum
+severity is warning; use `--severity info` to include rules configured as
+suggestions. The image does not install a global rule-severity configuration.
 
 ## Run the MCP sidecar
 
@@ -229,7 +257,8 @@ dotnet test common/Unity.Tests/Unity.Tests.csproj --configuration Release --logg
 ```
 
 Integration coverage exercises installed tools, SDK compilation, Unity editor
-commands, project discovery, argument and exit-status forwarding, concurrent
+commands, Unity analyzer defaults and EditorConfig overrides, project discovery,
+argument and exit-status forwarding, concurrent
 request credentials, worker reuse and mount isolation, progress notifications,
 and WebGL HTTP behavior. Real-engine tests require a matching Linux or Windows
 Docker engine and can create disposable containers, volumes, and images.
