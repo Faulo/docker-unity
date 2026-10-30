@@ -90,12 +90,13 @@ An agent may perform Git mutations only after the user explicitly opts in. Permi
 When Git mutations are authorized:
 
 - Do not change the current branch unless asked. Verify the working-tree status before editing and again before creating commits.
-- Treat all unknown local changes as user work. Do not overwrite, stage, commit, restore, or otherwise alter them.
+- Treat all unknown local changes as user work. Do not overwrite, stage, commit, restore, or otherwise alter them unless they complement your task.
 - Keep commits small and cohesive.
 - Format agent-authored commits according to Conventional Commits 1.0.0: `<type>[optional scope]: <description>`.
 - When working from a ticket, include the ticket key and URL in the commit footer.
 - Before committing, read the configured Git author name and email. Keep the configured email, append the agent name once, in brackets to the configured author name (e.g. `Daniel Schulz (Codex)`), and pass that identity explicitly with `git commit --author`. Do not modify repository or global Git configuration.
 - Do not force-push, amend, rebase, reset, or discard changes unless the user explicitly requests that specific operation.
+- Rewording commits not yet pushed to any remote is permitted.
 
 ### CI Infrastructure
 
