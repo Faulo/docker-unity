@@ -56,7 +56,7 @@ When the user has authorized the required release, Git, CI, and deployment opera
 
 1. Commit and push the implementation, then watch the complete GitHub CI image build.
 2. If GitHub CI fails, fix the issue and revalidate the candidate from Phase 2 before pushing the correction.
-3. After GitHub CI passes, run this image's Jenkins job and inspect the complete console log. Jenkins pulls and tests every configured published variant on Popo and Garl.
+3. A succesful GitHub CI run pushes the image to Dockerhub and automatically starts its associated Jenkins integration tests job. Wait for it to finish and inspect its complete console log.
 4. If any variant fails, fix the implementation, then test that specific variant with `pwsh ./.jenkins/Invoke-IntegrationTests.ps1 -Namespace tmp -Context <context> -Variant <variant>`, then start this phase over.
 5. Publishing is complete when GitHub and Jenkins pass for all contexts and variants.
 5. If the feature was based on a ticket, update the ticket's body to reflect the shipped design and mark it complete.

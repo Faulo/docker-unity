@@ -1,0 +1,41 @@
+name: Integration
+
+on:
+  workflow_run:
+    workflows: [ Docker ]
+    types: [ completed ]
+    branches: [ main ]
+
+permissions: {}
+
+jobs:
+  integration:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Queue Jenkins integration tests
+        env:
+          JENKINS_DEPLOY_USER: ${{ secrets.JENKINS_DEPLOY_USER }}
+          JENKINS_DEPLOY_PAT: ${{ secrets.JENKINS_DEPLOY_PAT }}
+          PUBLICATION_URL: ${{ github.event.workflow_run.html_url }}
+        shell: bash
+        run: |
+          : "${JENKINS_DEPLOY_USER:?Set the JENKINS_DEPLOY_USER repository secret}"
+          : "${JENKINS_DEPLOY_PAT:?Set the JENKINS_DEPLOY_PAT repository secret}"
+
+          job_url="https://ci.slothsoft.net/job/jenkins/job/${GITHUB_REPOSITORY#*/}/"
+          status="$(curl --silent --show-error --fail-with-body \
+            --connect-timeout 10 --max-time 60 \
+            --user "$JENKINS_DEPLOY_USER:$JENKINS_DEPLOY_PAT" \
+            --request POST "${job_url}build" \
+            --output "$RUNNER_TEMP/jenkins-response.txt" \
+            --write-out '%{http_code}')"
+
+          if [[ "$status" != 201 ]]; then
+            echo "::error::Jenkins did not confirm a queued build (HTTP $status)."
+            exit 1
+          fi
+
+          printf 'Queued [Jenkins integration tests](%s) after [image publication](%s). Test results are reported in Jenkins.\n' \
+            "$job_url" "$PUBLICATION_URL" >> "$GITHUB_STEP_SUMMARY"

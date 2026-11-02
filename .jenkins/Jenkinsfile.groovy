@@ -125,10 +125,12 @@ def pesterProject(config) {
                                     buildResult: 'FAILURE',
                                     catchInterruptions: false
                                 ) {
+                                    docker.image(image).pull()
+
                                     timeout(time: timeoutMinutes, unit: 'MINUTES') {
                                         echo "Testing ${image} on ${target}"
                                         try {
-                                            exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -Pull -TestsPath tests -ResultsPath ${resultsPath}"
+                                            exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -TestsPath tests -ResultsPath ${resultsPath}"
                                         } finally {
                                             junit(
                                                 testResults: resultsPath,
