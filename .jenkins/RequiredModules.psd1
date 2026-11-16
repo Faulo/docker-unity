@@ -1,4 +1,4 @@
 @{
-    'Pester' = @{}
-    'pwsh-dotenv' = @{}
+    'Pester' = @{ Repository = 'PSGallery' }
+    'pwsh-dotenv' = @{ Repository = 'PSGallery' }
 }

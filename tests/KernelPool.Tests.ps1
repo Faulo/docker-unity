@@ -86,7 +86,7 @@ public static class ContainerPoolProbe {
             }
         }
         $probeEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-            "& { $poolProbe } | ForEach-Object { 'CIcr_SAMPLE:' + `$_.PagedBytes + ':' + `$_.Outstanding + ':' + `$_.HostName }"))
+            "& { $poolProbe } | ForEach-Object { 'CIcr_SAMPLE:' + `$_.PagedBytes + ':' + `$_.Outstanding + ':' + `$_.HostName + ':END' }"))
 
         function Read-HostPool {
             if ($env:COMPUTERNAME -eq $daemon.Name -or $selfProcessContainer) {
@@ -97,7 +97,8 @@ public static class ContainerPoolProbe {
                 $output = @(& ssh -tt -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 $sshHost powershell.exe -NoProfile -NonInteractive -EncodedCommand $probeEncoded 2>&1)
                 if ($LASTEXITCODE -ne 0) { throw "Cannot read pool tags on Docker host $sshHost" }
                 $plain = ($output | Out-String) -replace '\x1B\[[0-?]*[ -/]*[@-~]', ''
-                $match = [regex]::Matches($plain, 'CIcr_SAMPLE:(\d+):(\d+):([\w-]+)') | Select-Object -Last 1
+                # A delimiter prevents console redraws from joining the hostname to the next marker.
+                $match = [regex]::Matches($plain, 'CIcr_SAMPLE:(\d+):(\d+):([\w-]+):END') | Select-Object -Last 1
                 if ($null -eq $match) { throw "Docker host $sshHost returned no CIcr sample: $plain" }
                 $sample = [pscustomobject]@{
                     Time = [DateTimeOffset]::UtcNow.ToString('o')
@@ -116,7 +117,7 @@ public static class ContainerPoolProbe {
         $hyperVRequested = ($DockerRunArguments -join ' ') -match '(?:^|\s)--isolation(?:=|\s+)hyperv(?:\s|$)'
         $isolation = if ($hyperVRequested -or $daemon.Isolation -eq 'hyperv') { 'hyperv' } else { 'process' }
         $identity = Invoke-DockerOutput -Context $Context -Arguments @('image', 'inspect', '--format', '{{.Id}} {{.OsVersion}}', $Image)
-        Write-Information -InformationAction Continue -MessageData "CIcr host=$($daemon.Name); isolation=$isolation; image=$identity; allowance=0/0"
+        Write-Information -InformationAction Continue -MessageData "CIcr host=$($daemon.Name); isolation=$isolation; image=$identity; warmups=1/workload; allowance=0/0"
         $shellWorkload = {
             $ErrorActionPreference = 'Stop'
             Add-Type -TypeDefinition @'
@@ -143,10 +144,12 @@ public static class ShellActivationProbe {
         $activationEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($shellWorkload.ToString()))
 
         function Invoke-ProbeContainer {
-            param([bool] $ActivateShell)
+            param([bool] $ActivateShell, [int] $HoldSeconds = 0)
             $container = "kernel-pool-$([guid]::NewGuid().ToString('N'))"
             try {
-                $command = if ($ActivateShell) {
+                $command = if ($HoldSeconds -gt 0) {
+                    @('--entrypoint', 'powershell.exe', $Image, '-NoProfile', '-NonInteractive', '-Command', "Start-Sleep -Seconds $HoldSeconds")
+                } elseif ($ActivateShell) {
                     @('--entrypoint', 'powershell.exe', $Image, '-NoProfile', '-NonInteractive', '-EncodedCommand', $activationEncoded)
                 } else {
                     @('--entrypoint', 'cmd.exe', $Image, '/d', '/c', 'exit', '0')
@@ -167,12 +170,22 @@ public static class ShellActivationProbe {
         }
     }
 
-    It 'retains no host CIcr after repeated <Workload> starts' -ForEach @(
-        @{ Workload = 'minimal'; ActivateShell = $false },
-        @{ Workload = 'shell application'; ActivateShell = $true }
+    It 'retains no additional host CIcr after repeated warm <Workload> starts' -ForEach @(
+        @{ Workload = 'minimal'; ActivateShell = $false; HoldSeconds = 0 },
+        @{ Workload = 'shell application'; ActivateShell = $true; HoldSeconds = 0 },
+        # Delayed automatic services start after roughly two minutes on Windows.
+        @{ Workload = 'delayed service'; ActivateShell = $false; HoldSeconds = 150 }
     ) {
-        # Warm the probe only: an image's first start must not hide retained pool.
+        # One fixed warm-up per workload permits initial host signature/catalog caching.
+        # Never retry warm-ups until growth disappears: repeated retention must still fail.
         $null = Read-HostPool
+        $warmBefore = Read-HostPool
+        Invoke-ProbeContainer -ActivateShell $ActivateShell -HoldSeconds $HoldSeconds
+        Start-Sleep -Seconds 10
+        $warmAfter = Read-HostPool
+        Write-Information -InformationAction Continue -MessageData ("CIcr warm-up ({0}): {1} bytes, {2} allocations; before={3}; after={4}" -f
+            $Workload, ($warmAfter.PagedBytes - $warmBefore.PagedBytes), ($warmAfter.Outstanding - $warmBefore.Outstanding),
+            ($warmBefore | ConvertTo-Json -Compress), ($warmAfter | ConvertTo-Json -Compress))
         $previous = Read-HostPool
         $stable = $false
         for ($attempt = 0; $attempt -lt 6; $attempt++) {
@@ -191,7 +204,7 @@ public static class ShellActivationProbe {
         $allocationDeltas = @()
         foreach ($iteration in 1..3) {
             $timer = [Diagnostics.Stopwatch]::StartNew()
-            Invoke-ProbeContainer -ActivateShell $ActivateShell
+            Invoke-ProbeContainer -ActivateShell $ActivateShell -HoldSeconds $HoldSeconds
             $timer.Stop()
             Start-Sleep -Seconds 10
             $after = Read-HostPool

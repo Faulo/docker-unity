@@ -263,6 +263,12 @@ request credentials, worker reuse and mount isolation, progress notifications,
 and WebGL HTTP behavior. Real-engine tests require a matching Linux or Windows
 Docker engine and can create disposable containers, volumes, and images.
 
+For the legacy Linux Bee hang investigation, the opt-in
+[cold-build reproduction harness](tests/bee-repro/README.md) includes a minimal
+Unity project, bounded game-project runs, editor-version comparisons, and
+Pester assertions over the collected evidence. It mounts source checkouts
+read-only and keeps generated projects inside disposable containers.
+
 Both Dockerfiles use the repository root as their build context. Build a local
 candidate with an engine matching the selected platform:
 

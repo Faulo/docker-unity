@@ -99,7 +99,7 @@ static class Program {
                 timeoutSeconds = timeoutSeconds,
                 deadlineUtc = deadline,
                 launcher = ProcessIdentity.Current(),
-                rootProcess = ProcessIdentity.FromProcess(child.process),
+                rootProcess = child.identity,
                 processGroupId = child.processGroupId,
                 jobName = child.jobName
             };
@@ -149,6 +149,9 @@ static class Program {
             Console.Error.WriteLine($"unity: {exception.Message}");
             return 1;
         } finally {
+            if (child is not null && OperatingSystem.IsLinux()) {
+                await child.TerminateAsync(terminationGracePeriod);
+            }
             if (record is not null) {
                 store.RemoveActive(record.id);
             }
@@ -213,7 +216,7 @@ static class Program {
             }
 
             foreach (var record in store.ReadActive()) {
-                if (record.rootProcess.IsAlive()) {
+                if (OperatingSystem.IsLinux() || record.rootProcess.IsAlive()) {
                     WriteLifecycleEvent(LifecycleEvent.Finish("CANCELLED", record, 130, "sidecar stopping"));
                     await ProcessTree.TerminateRecordAsync(record, terminationGracePeriod);
                 }
@@ -275,7 +278,7 @@ static class Program {
         }
 
         WriteLifecycleEvent(LifecycleEvent.Finish("ORPHANED", record, null, "launcher disappeared"));
-        if (record.rootProcess.IsAlive()) {
+        if (OperatingSystem.IsLinux() || record.rootProcess.IsAlive()) {
             await ProcessTree.TerminateRecordAsync(record, terminationGracePeriod);
         }
 
@@ -650,17 +653,21 @@ sealed class ChildProcess : IDisposable {
     readonly Action resume;
     bool resumed;
 
-    internal ChildProcess(Process process, int processGroupId, string? jobName, Action resume, IDisposable? nativeResource) {
+    internal ChildProcess(Process process, int processGroupId, string? jobName, Action resume, IDisposable? nativeResource, string? invocationId = null) {
         this.process = process;
         this.processGroupId = processGroupId;
         this.jobName = jobName;
         this.resume = resume;
         this.nativeResource = nativeResource;
+        this.invocationId = invocationId;
+        identity = ProcessIdentity.FromProcess(process);
     }
 
     internal Process process { get; }
     internal int processGroupId { get; }
     internal string? jobName { get; }
+    internal string? invocationId { get; }
+    internal ProcessIdentity identity { get; }
 
     public void Dispose() {
         process.Dispose();
@@ -681,79 +688,28 @@ static class ProcessTree {
     internal static ChildProcess StartComposer(string[] args, string invocationId, RuntimeCredentials credentials) {
         return OperatingSystem.IsWindows()
             ? WindowsProcessTree.Start(Program.ComposerStartInfo(args, credentials: credentials), invocationId)
-            : UnixProcessTree.Start(Program.ComposerStartInfo(args, credentials: credentials));
+            : UnixProcessTree.Start(Program.ComposerStartInfo(args, credentials: credentials), invocationId);
     }
 
     internal static Task TerminateChildAsync(ChildProcess child, TimeSpan gracePeriod) => OperatingSystem.IsWindows()
         ? WindowsProcessTree.TerminateAsync(child.process, child.jobName, gracePeriod)
-        : UnixProcessTree.TerminateAsync(child.process, child.processGroupId, gracePeriod);
+        : UnixProcessTree.TerminateAsync(child.identity, child.invocationId, gracePeriod);
 
     internal static async Task TerminateRecordAsync(InvocationRecord record, TimeSpan gracePeriod) {
+        if (OperatingSystem.IsLinux()) {
+            await UnixProcessTree.TerminateAsync(record.rootProcess, record.id, gracePeriod);
+            return;
+        }
         if (!record.rootProcess.IsAlive()) {
             return;
         }
 
         try {
             using var process = Process.GetProcessById(record.rootProcess.pid);
-            if (OperatingSystem.IsWindows()) {
-                await WindowsProcessTree.TerminateAsync(process, record.jobName, gracePeriod);
-            } else {
-                await UnixProcessTree.TerminateAsync(process, record.processGroupId, gracePeriod);
-            }
+            await WindowsProcessTree.TerminateAsync(process, record.jobName, gracePeriod);
         } catch (ArgumentException) {
         } catch (InvalidOperationException) {
         }
-    }
-}
-
-static class UnixProcessTree {
-    const int SIG_TERM = 15;
-    const int SIG_KILL = 9;
-
-    [DllImport("libc", SetLastError = true)]
-    static extern int kill(int pid, int signal);
-
-    internal static ChildProcess Start(ProcessStartInfo composer) {
-        var startInfo = new ProcessStartInfo("/usr/bin/setsid") { UseShellExecute = false, WorkingDirectory = composer.WorkingDirectory };
-        startInfo.Environment.Clear();
-        foreach (var variable in composer.Environment) {
-            startInfo.Environment[variable.Key] = variable.Value;
-        }
-
-        startInfo.ArgumentList.Add("--wait");
-        startInfo.ArgumentList.Add(composer.FileName);
-        foreach (string argument in composer.ArgumentList) {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start Composer process group.");
-        return new ChildProcess(process, process.Id, null, () => { }, null);
-    }
-
-    internal static async Task TerminateAsync(Process? process, int processGroupId, TimeSpan gracePeriod) {
-        if (processGroupId <= 0) {
-            return;
-        }
-
-        kill(-processGroupId, SIG_TERM);
-        if (process is not null && await WaitForExitAsync(process, gracePeriod)) {
-            return;
-        }
-
-        await Task.Delay(gracePeriod);
-        kill(-processGroupId, SIG_KILL);
-        if (process is not null) {
-            await WaitForExitAsync(process, TimeSpan.FromSeconds(2));
-        }
-    }
-
-    static async Task<bool> WaitForExitAsync(Process process, TimeSpan timeout) {
-        if (process.HasExited) {
-            return true;
-        }
-
-        var wait = process.WaitForExitAsync();
-        return await Task.WhenAny(wait, Task.Delay(timeout)) == wait;
     }
 }
 
