@@ -129,15 +129,10 @@ def pesterProject(config) {
 
                                     timeout(time: timeoutMinutes, unit: 'MINUTES') {
                                         echo "Testing ${image} on ${target}"
-                                        try {
-                                            exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -TestsPath tests -ResultsPath ${resultsPath}"
-                                        } finally {
-                                            junit(
-                                                testResults: resultsPath,
-                                                allowEmptyResults: false,
-                                                skipMarkingBuildUnstable: false
-                                            )
-                                        }
+
+										exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -TestsPath tests -ResultsPath ${resultsPath}"
+
+										junit(testResults: resultsPath, allowEmptyResults: false)
                                     }
                                 }
                             }
