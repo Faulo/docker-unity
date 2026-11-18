@@ -129,10 +129,16 @@ def pesterProject(config) {
 
                                     timeout(time: timeoutMinutes, unit: 'MINUTES') {
                                         echo "Testing ${image} on ${target}"
+                                        catchError(
+                                            message: "Pester integration tests failed for ${image} on ${target}",
+                                            stageResult: 'UNSTABLE',
+                                            buildResult: 'UNSTABLE',
+                                            catchInterruptions: false
+                                        ) {
+                                            exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -TestsPath tests -ResultsPath ${resultsPath}"
+                                        }
 
-										exec "pwsh -NoLogo -NoProfile -NonInteractive -File .jenkins/Invoke-IntegrationTests.ps1 -Variant ${variant} -TestsPath tests -ResultsPath ${resultsPath}"
-
-										junit(testResults: resultsPath, allowEmptyResults: false)
+                                        junit(testResults: resultsPath, allowEmptyResults: false)
                                     }
                                 }
                             }
