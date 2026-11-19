@@ -44,7 +44,9 @@ if os.environ.get('FIXTURE_ROOT_EXIT'):
 while True: time.sleep(1)
 ''')
     composer.chmod(0o755)
-    env = dict(os.environ, PATH=directory + ':' + os.environ['PATH'], UNITY_CALL_TIMEOUT='0')
+    state = root / 'state'
+    env = dict(os.environ, PATH=directory + ':' + os.environ['PATH'],
+               UNITY_CALL_TIMEOUT='0', UNITY_STATE_DIRECTORY=str(state), UNITY_MCP='0')
     other = subprocess.Popen(['unity', 'fixture'], env=dict(env, FIXTURE_CHILD=str(root / 'other')))
     target = subprocess.Popen(['unity', 'fixture'], env=dict(env, FIXTURE_CHILD=str(root / 'target')))
     try:
@@ -69,7 +71,7 @@ while True: time.sleep(1)
                 wait_for(path.exists)
                 assert child.wait(timeout=25) == expected
                 pid = int(path.read_text())
-                wait_for(lambda: not alive(pid), timeout=3)
+                wait_for(lambda pid=pid: not alive(pid), timeout=3)
                 print(json.dumps({'scenario': mode, 'result': 'passed'}))
             finally:
                 if child.poll() is None:
@@ -77,13 +79,14 @@ while True: time.sleep(1)
                     child.wait()
                 if path.exists() and alive(int(path.read_text())):
                     os.kill(int(path.read_text()), signal.SIGKILL)
-        supervisor = subprocess.Popen(['unity-sidecar'], env=env, stdout=subprocess.DEVNULL)
+        supervisor = subprocess.Popen(['unity-sidecar'], env=env)
         orphan = None
         try:
-            wait_for(lambda: Path('/run/unity/ready.json').exists())
+            wait_for(lambda: (state / 'ready.json').exists())
             path = root / 'orphan'
             orphan = subprocess.Popen(['unity', 'fixture'], env=dict(env, FIXTURE_CHILD=str(path)))
             wait_for(path.exists)
+            wait_for(lambda: any((state / 'active').glob('*.json')))
             orphan.kill()
             orphan.wait()
             pid = int(path.read_text())

@@ -116,13 +116,17 @@ static class Program {
 
             if (completed == timeoutTask) {
                 store.WriteEvent(LifecycleEvent.Finish("TIMEOUT", record, 124));
-                await child.TerminateAsync(terminationGracePeriod);
+                if (OperatingSystem.IsWindows()) {
+                    await child.TerminateAsync(terminationGracePeriod);
+                }
                 return 124;
             }
 
             if (completed == cancellationTask) {
                 store.WriteEvent(LifecycleEvent.Finish("CANCELLED", record, 130));
-                await child.TerminateAsync(terminationGracePeriod);
+                if (OperatingSystem.IsWindows()) {
+                    await child.TerminateAsync(terminationGracePeriod);
+                }
                 return 130;
             }
 

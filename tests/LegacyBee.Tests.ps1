@@ -16,24 +16,29 @@ Describe "Legacy Bee cold build [$Os, $Image]" {
         $output = if ($Os -eq 'windows') { 'C:/bee-output' } else { '/work/output' }
         $keeper = if ($Os -eq 'windows') { 'cmd.exe' } else { 'cat' }
         try {
-            # A private writable editor copy prevents compatibility preparation from
-            # changing the shared CI editor cache during published/candidate comparisons.
-            $editorSource = if ($Os -eq 'windows') { 'C:/source-editors' } else { '/source-editors' }
-            $arguments = @('run', '--detach', '--interactive', '--no-healthcheck', '--name', $container,
-                '--env', 'UNITY_CREDENTIALS_USR', '--env', 'UNITY_CREDENTIALS_PSW',
-                '--env', 'EMAIL_CREDENTIALS_USR', '--env', 'EMAIL_CREDENTIALS_PSW',
-                '--env', 'UNITY_NO_GRAPHICS=0', '--env', 'UNITY_CALL_TIMEOUT=300',
-                '--mount', "type=volume,source=unity-binaries,target=$editorSource,readonly", $Image, $keeper)
-            Invoke-Docker -Context $Context -Arguments $arguments
-            if ($Os -eq 'windows') {
-                Invoke-Docker -Context $Context -Arguments @('exec', $container, 'pwsh', '-NoProfile', '-Command',
-                    '$ErrorActionPreference="Stop"; Copy-Item C:/source-editors/2021.3.45f2 "C:/Program Files/Unity/Hub/Editor/2021.3.45f2" -Recurse')
+            # Linux prepares a private editor copy instead of changing the shared cache.
+            $runArguments = if ($Os -eq 'windows') {
+                $DockerRunArguments
             } else {
+                @('--env', 'UNITY_CREDENTIALS_USR', '--env', 'UNITY_CREDENTIALS_PSW',
+                    '--env', 'EMAIL_CREDENTIALS_USR', '--env', 'EMAIL_CREDENTIALS_PSW',
+                    '--mount', 'type=volume,source=unity-binaries,target=/source-editors,readonly')
+            }
+            $arguments = @('run', '--detach', '--interactive', '--no-healthcheck', '--name', $container,
+                '--env', 'UNITY_NO_GRAPHICS=0', '--env', 'UNITY_CALL_TIMEOUT=300', $Image, $keeper)
+            Invoke-Docker -Context $Context -RunArguments $runArguments -Arguments $arguments
+            if ($Os -eq 'linux') {
                 Invoke-Docker -Context $Context -Arguments @('exec', $container, 'sh', '-c',
                     'set -eu; mkdir -p /root/Unity/Hub/Editor /work; cp -a /source-editors/Hub/Editor/2021.3.45f2 /root/Unity/Hub/Editor/')
+                Invoke-Docker -Context $Context -Arguments @('cp',
+                    (Join-Path $PSScriptRoot 'bee-repro/fixtures/GameJam.Minimal'), "${container}:$project")
+            } else {
+                $archive = Join-Path $TestDrive 'bee-project.zip'
+                Compress-Archive -Path (Join-Path $PSScriptRoot 'bee-repro/fixtures/GameJam.Minimal/*') -DestinationPath $archive
+                Invoke-Docker -Context $Context -Arguments @('cp', $archive, "${container}:C:/bee-project.zip")
+                Invoke-Docker -Context $Context -Arguments @('exec', $container, 'pwsh', '-NoProfile', '-Command',
+                    'Expand-Archive -LiteralPath C:/bee-project.zip -DestinationPath C:/bee-project -ErrorAction Stop')
             }
-            Invoke-Docker -Context $Context -Arguments @('cp',
-                (Join-Path $PSScriptRoot 'bee-repro/fixtures/GameJam.Minimal'), "${container}:$project")
             $result = Get-DockerCommandResult -Context $Context -Arguments @(
                 'exec', $container, 'unity', 'build', '--junit', '-', $project, $output, 'windows')
             $result.ExitCode | Should -Be 0 -Because ($result.Output | Out-String)
@@ -51,12 +56,12 @@ Describe "Linux invocation cleanup [$Image]" -Skip:($Os -ne 'linux') {
     It 'kills detached compiler children after the root exits without touching another call' {
         $container = "unity-tree-$([guid]::NewGuid().ToString('N'))"
         try {
-            Invoke-Docker -Context $Context -Arguments @('run', '--detach', '--interactive', '--no-healthcheck',
+            Invoke-Docker -Context $Context -Arguments @('run', '--detach', '--interactive', '--init', '--no-healthcheck',
                 '--name', $container, $Image, 'cat')
             Invoke-Docker -Context $Context -Arguments @('cp',
                 (Join-Path $PSScriptRoot 'ProcessFixtures'), "${container}:/process-fixtures")
             $result = Get-DockerCommandResult -Context $Context -Arguments @(
-                'exec', $container, 'python3', '/process-fixtures/cancellation.py')
+                'exec', $container, 'python3', '-u', '/process-fixtures/cancellation.py')
             $result.ExitCode | Should -Be 0 -Because ($result.Output | Out-String)
         } finally {
             Get-DockerCommandResult -Context $Context -Arguments @('rm', '--force', '--volumes', $container) | Out-Null

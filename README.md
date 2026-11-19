@@ -50,6 +50,14 @@ Set the credential variables in your shell or CI environment first. The first
 run may download the editor and take substantially longer than later runs.
 Unity authentication and licensing requirements still apply.
 
+The Linux image prepares Unity 2021.3's Bee executable before the editor runs.
+It preserves the original binary and disables the stdin canary that stalls
+script compilation on this image. The editor cache must be writable on first
+use. A prepared cache can be mounted read-only. Use the native `unity` command
+for batch cancellation and timeouts so the launcher can stop Unity, Bee, and
+their compiler processes even if they create separate process groups. Linux
+process cleanup uses process handles supported by kernels 5.3 and newer.
+
 The example above uses Linux paths. On Windows, select
 `faulo/unity:latest-windows` and use
 `target=c:/program files/unity/hub/editor` for the editor volume, quoting the
@@ -210,6 +218,7 @@ Direct commands and the sidecar accept these environment variables:
 | `UNITY_MCP` | `0` | Set to `1` to enable the MCP server |
 | `UNITY_CALL_TIMEOUT` | `86400` | Maximum command duration in seconds |
 | `UNITY_NO_GRAPHICS` | `1` | Configure headless Unity execution |
+| `UNITY_LEGACY_BEE_COMPAT` | `1` on Linux | Prepare unmodified Linux Unity 2021.3 editors with the Bee workaround |
 | `UNITY_ACCELERATOR_ENDPOINT` | Empty | Optional Unity Accelerator endpoint |
 | `UNITY_LOGGING` | `stdin stdout stderr` | Command logging streams |
 
@@ -250,6 +259,11 @@ The repository contains daemon-free NUnit tests in
 [`common/Unity.DaemonTests`](common/Unity.DaemonTests), and Pester image
 integration tests in [`tests`](tests).
 
+The Linux 2021.3 workaround is available from `slothsoft/unity` 2.24.1. When
+releasing changes to that hook, publish the Composer package before rebuilding
+the image so it picks up the updated backend. `tests/LegacyBee.Tests.ps1`
+exercises the installed backend through a cold player build.
+
 With the .NET 9 SDK installed, run the daemon-free tests:
 
 ```console
@@ -273,11 +287,11 @@ Both Dockerfiles use the repository root as their build context. Build a local
 candidate with an engine matching the selected platform:
 
 ```console
-docker build --file linux/Dockerfile --tag tmp/unity:latest .
+docker --context linux build --file linux/Dockerfile --tag tmp/unity:latest .
 ```
 
 ```console
-docker build --file windows/Dockerfile --tag tmp/unity:latest .
+docker --context windows build --file windows/Dockerfile --tag tmp/unity:latest .
 ```
 
 ### Build arguments

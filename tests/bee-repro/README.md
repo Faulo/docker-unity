@@ -20,13 +20,26 @@ Docker Desktop filesystem layouts. Transient inspection transport errors are
 retried; infrastructure failures are saved separately and must not be counted
 as Bee failures.
 
-Prerequisites are the published `faulo/unity:latest` Linux image, the
-`unity-binaries` volume containing the requested Linux editor and Windows Mono
-build module, and a valid license in `unity-license`. The four credential
-environment variables documented in the root README are forwarded by name.
-Editor and license seed volumes are mounted read-only; the license is copied
-into the disposable container. Missing editors cannot be installed into the
-read-only editor volume. Install prerequisites separately before testing.
+Prerequisites are a Linux image, the `unity-binaries` volume containing the
+requested Linux editor and Windows Mono build module, and a valid license in
+`unity-license`. The four credential environment variables documented in the
+root README are forwarded by name. Editor and license seed volumes are mounted
+read-only. The runner copies the license into the disposable container.
+
+The default image is `faulo/unity:latest`. To reproduce the original hang,
+pull the baseline image and select it with `--image`, using an editor cache
+with the original Bee binary:
+
+```powershell
+$baseline = 'faulo/unity@sha256:45211f7757814d485c6c0cf25a8c9b725920639eb0a9009e3efa5476bffaf185'
+docker --context linux pull $baseline
+python tests/bee-repro/run_matrix.py --image $baseline --projects-root tests/bee-repro/fixtures --projects Minimal --results .reports/bee-baseline
+```
+
+For an image with the fix enabled, prepare Unity 2021.3 once by running an
+editor command with the cache mounted writable. Then pass that cache to the
+runner with `--editor-volume`. The image integration test exercises this
+first run using a private copy of the editor.
 
 The image tag is resolved to an immutable image ID before the matrix starts.
 The runner executes `unity build --junit - /work/project /work/output windows`
@@ -100,16 +113,15 @@ project revisions, and upgrade recommendations.
 
 ## Experimental 2021.3 remedies
 
-These scripts are investigation fixtures, not the production installation hook.
-They leave the published image and shared editor volume unchanged. To prepare
-a new private editor volume, mount the scripts at `/repro` and run:
+These investigation scripts use the baseline image selected above. To prepare
+a private editor volume, mount the scripts at `/repro` and run:
 
 ```powershell
 docker --context linux run --rm --no-healthcheck `
     --mount type=volume,source=unity-binaries,target=/source,readonly `
     --mount type=volume,source=bee-remedy-editors,target=/candidate `
     --mount "type=bind,source=$((Resolve-Path tests/bee-repro).Path),target=/repro,readonly" `
-    faulo/unity:latest sh /repro/prepare_remedy.sh
+    $baseline sh /repro/prepare_remedy.sh
 ```
 
 On this machine's native WSL daemon, use the `/mnt/c/.../tests/bee-repro` source
@@ -119,9 +131,9 @@ prepared. The original Bee is preserved as `bee_backend.real`; its SHA-256
 must match the shared editor's original. The wrapper removes only the exact
 `--stdin-canary` argument, preserves all other arguments, and uses `exec`.
 
-```console
-python tests/bee-repro/run_matrix.py --projects-root tests/bee-repro/fixtures --projects Minimal --results .reports/bee-remedy-repeat/minimal --editor-volume bee-remedy-editors --bee-wrapper tests/bee-repro/bee_without_canary.sh --wsl-paths
-python tests/bee-repro/run_matrix.py --projects BattleOfTheGods --results .reports/bee-remedy-repeat/game --editor-volume bee-remedy-editors --bee-wrapper tests/bee-repro/bee_without_canary.sh --wsl-paths
+```powershell
+python tests/bee-repro/run_matrix.py --image $baseline --projects-root tests/bee-repro/fixtures --projects Minimal --results .reports/bee-remedy-repeat/minimal --editor-volume bee-remedy-editors --bee-wrapper tests/bee-repro/bee_without_canary.sh --wsl-paths
+python tests/bee-repro/run_matrix.py --image $baseline --projects BattleOfTheGods --results .reports/bee-remedy-repeat/game --editor-volume bee-remedy-editors --bee-wrapper tests/bee-repro/bee_without_canary.sh --wsl-paths
 ```
 
 `--bee-wrapper` optionally overlays a script at the selected editor's Bee path,
@@ -134,8 +146,8 @@ the extracted Debian Bullseye packages `libc6=2.31-13+deb11u11` and
 installed over the image's system libc. Runtime versions and hashes are in
 `.reports/bee-remedy/compat-runtime.txt`. To repeat this alternative:
 
-```console
-python tests/bee-repro/run_matrix.py --projects-root tests/bee-repro/fixtures --projects Minimal --results .reports/bee-remedy-repeat/libc --editor-volume bee-remedy-editors --bee-wrapper tests/bee-repro/bee_legacy_libc.sh --compat-volume bee-remedy-libc --wsl-paths
+```powershell
+python tests/bee-repro/run_matrix.py --image $baseline --projects-root tests/bee-repro/fixtures --projects Minimal --results .reports/bee-remedy-repeat/libc --editor-volume bee-remedy-editors --bee-wrapper tests/bee-repro/bee_legacy_libc.sh --compat-volume bee-remedy-libc --wsl-paths
 ```
 
 Use `--cancel-at-bee launcher` or `--cancel-at-bee editor` in a separate results

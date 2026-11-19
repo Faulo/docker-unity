@@ -217,3 +217,78 @@ build, Windows-host validation, the other thirteen games with the workaround,
 and the proposed installer/cleanup implementation have not been performed in
 this phase. No Git mutation, CI trigger, or publication occurred. Private editor
 and compatibility-runtime volumes are retained for repeat runs.
+
+## Implementation validation (2026-11-19)
+
+The Linux image enables `UNITY_LEGACY_BEE_COMPAT`. The Composer backend applies
+the wrapper just before Linux 2021.3 editor execution, preserving and verifying
+the original binary. It supports concurrent preparation, interrupted preparation,
+and reuse of a prepared read-only cache. The native Linux launcher tracks
+invocation processes through group changes and reparenting, and sends TERM and
+then KILL through Linux process handles when needed.
+
+On Garl, the published image failed the cold fixture at the original Bee
+`ScriptAssemblies` invocation and left a separate compiler process alive in the
+cancellation fixture. The Linux candidate rebuilt from the Dockerfile and
+overlaid with the unreleased Composer sources passed the full integration suite
+with 43 passes and 8 platform skips. The final candidate was
+`tmp/unity:bee-enabled` (`sha256:b9e9128902f1bc8081af9ef7e161a9cbc631d5f9490570d92fbe6184c5c8139d`).
+An earlier full rebuild encountered a Unity Hub bus error before editor launch.
+The rerun reached the editor and passed the cold build.
+
+The local candidate produced a player through direct Composer invocation on
+2021.3.45f2 and through the native launcher on the 2022.3.62f3 control. In a
+separate 2021.3 build, SIGTERM hit the native launcher while Bee had compiler
+children. It exited 130 with no Unity or Bee survivors at the 20-second check.
+The process fixture separately verified TERM-resistant children, timeouts,
+early root exit, concurrent-call isolation, and sidecar recovery after launcher
+death. The private editor's preserved Bee hash matched the original.
+
+All fourteen projects in the 2021.3 matrix completed a clean Windows-player
+build on 2021.3.45f2 with the workaround. The runs used a private cache and the
+same wrapper on the local Linux daemon and Garl. Each build started without a
+Library, exited zero, and produced a nonempty player. Pester passed all 28
+assertions over the selected results in `.reports/bee-fix/verified-games/`.
+
+The Windows control passed the same cold 2021.3 player build on Popo using
+`tmp/unity:bee-windows`, an overlay of the published Windows image with the new
+launcher and Composer sources. The full Windows Dockerfile build stopped making
+progress after dependency installation, so the Windows validation used the
+overlay. The full Pester run had 48 passes, two failures, and one Linux-only
+skip. All ten empty-project tests passed, including the GPU cases. The cold
+fixture initially used a mount form rejected by the Windows daemon. Its
+focused rerun passed with the standard `.env` editor-volume arguments, and
+the focused Linux rerun passed both regression tests. The second failure was
+a host Code Integrity pool increase while other CI
+containers started on Popo during the delayed-service sample. That workload
+invokes PowerShell directly and the host-wide measurement cannot attribute the
+increase to this image.
+
+All 115 .NET unit tests passed. The Composer package's 530-test PHPUnit suite
+reported no failures and 12 skips. All nine compatibility tests passed.
+PHPStan reported no issues in the new class and its tests. At this checkpoint
+the full package analysis still reported findings in existing code. Detailed
+validation logs are under `.reports/bee-fix/`.
+
+## Release validation (2026-11-19)
+
+`slothsoft/unity` 2.24.1 includes the compatibility hook. PHPStan passed
+at level 8 after the existing findings were fixed. All 24 GitHub matrix jobs
+and all 16 Jenkins runtime jobs passed for the released commit.
+
+The pre-release image baseline used `faulo/unity` at digest
+`sha256:45211f7757814d485c6c0cf25a8c9b725920639eb0a9009e3efa5476bffaf185`.
+On Garl, the build timed out with exit 124 in Bee's `ScriptAssemblies` and
+the detached compiler survived cancellation. The other 41 checks passed
+and eight were skipped. On Popo, 50 checks passed, including the cold
+2021.3 build and the host Code Integrity tests. The Linux-only cleanup
+check was skipped on Windows.
+
+Both release candidates were built from their Dockerfiles and installed
+`slothsoft/unity` 2.24.1 from Packagist. Garl passed 43 integration checks,
+including both regressions, with eight platform skips. Popo passed 50
+integration checks with one platform skip, including the cold 2021.3 build
+and all three host Code Integrity workloads. The Linux candidate also built
+Windows players from clean checkouts of BattleOfTheGods at `ea248964` in
+332 seconds and BrieYourself at `4499ea31` in 382 seconds. Both builds exited
+zero and left no live Unity or Bee processes at the post-build check.

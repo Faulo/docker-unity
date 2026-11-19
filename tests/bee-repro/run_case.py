@@ -18,9 +18,9 @@ def processes():
         try:
             name = (entry / 'comm').read_text().strip()
             executable_name = name
-            if name == 'bee_backend.rea' or name.startswith('ld-linux'):
+            if name in ('bee_backend.rea', 'bee_backend.uni') or name.startswith('ld-linux'):
                 arguments = (entry / 'cmdline').read_bytes().split(b'\0')
-                if any(argument.endswith(b'/bee_backend.real') for argument in arguments[:6]):
+                if any(argument.endswith((b'/bee_backend.real', b'/bee_backend.unity-original')) for argument in arguments[:6]):
                     name = 'bee_backend'
             if name not in ('Unity', 'bee_backend'):
                 continue

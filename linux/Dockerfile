@@ -143,6 +143,7 @@ ENV COMPOSER_VENDOR_DIR="/unity/vendor"
 ENV UNITY_LOGGING="stdin stdout stderr"
 ENV UNITY_ACCELERATOR_ENDPOINT=""
 ENV UNITY_NO_GRAPHICS="1"
+ENV UNITY_LEGACY_BEE_COMPAT="1"
 
 COPY --chmod=755 --from=composer:2 /usr/bin/composer /usr/local/bin/composer
 COPY --chmod=755 --from=build /solution/common/Unity/bin/Release/net9.0/linux-x64/publish/unity /usr/local/bin/unity
@@ -153,7 +154,7 @@ ENV UNITY_MCP="0"
 
 ARG UNITY_TIMEOUT="14400"
 RUN install -m 0755 -d /unity && \
-    composer require "slothsoft/unity" && \
+    composer require "slothsoft/unity:^2.24.1" && \
     composer config process-timeout "$UNITY_TIMEOUT" && \
     composer update --no-interaction --no-dev --optimize-autoloader --classmap-authoritative
 
